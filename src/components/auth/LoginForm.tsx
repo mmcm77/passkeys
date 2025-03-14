@@ -6,6 +6,17 @@ import {
   browserSupportsWebAuthnAutofill,
 } from "@simplewebauthn/browser";
 
+// Import shadcn/ui components
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardHeader,
+  CardContent,
+  CardFooter,
+} from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+
 export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<
@@ -208,146 +219,68 @@ export default function LoginForm() {
   }
 
   return (
-    <div className="w-full max-w-md mx-auto p-6 bg-white rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">
-        Sign In with Passkey
-      </h2>
+    <Card className="w-full max-w-md mx-auto">
+      <CardHeader>
+        <h2 className="text-2xl font-bold text-center">Sign In with Passkey</h2>
+      </CardHeader>
 
       {status === "idle" && (
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div className="space-y-2">
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-gray-700"
-            >
-              Email
-            </label>
-            <input
-              ref={emailInputRef}
-              type="email"
-              id="email"
-              name="email"
-              autoComplete="webauthn"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            />
-            {supportsAutofill && (
-              <p className="text-xs text-gray-500 mt-1">
-                Click in the field above to see your saved passkeys
-              </p>
-            )}
-          </div>
+        <form onSubmit={handleLogin}>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                ref={emailInputRef}
+                type="email"
+                id="email"
+                name="email"
+                autoComplete="webauthn"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full"
+              />
+              {supportsAutofill && (
+                <p className="text-xs text-muted-foreground">
+                  Click in the field above to see your saved passkeys
+                </p>
+              )}
+            </div>
 
-          <button
-            type="submit"
-            className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Sign In
-          </button>
+            <Button type="submit" className="w-full">
+              Sign In
+            </Button>
 
-          <div className="text-center mt-4">
-            <a
-              href="/register"
-              className="text-sm text-indigo-600 hover:text-indigo-500"
-            >
-              Don't have a passkey? Register
-            </a>
-          </div>
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={handleResetCredentials}
+                className="text-sm text-muted-foreground hover:text-primary underline"
+              >
+                Reset Credentials
+              </button>
+            </div>
+          </CardContent>
         </form>
       )}
 
       {status === "authenticating" && (
-        <div className="text-center py-8 space-y-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
-          <p className="text-gray-700">Looking for your passkey...</p>
-          <p className="text-sm text-gray-500">
-            Follow the prompts from your browser or device.
-          </p>
-          <button
-            onClick={() => {
-              isAuthenticating.current = false;
-              setStatus("idle");
-            }}
-            className="mt-4 text-sm text-gray-500 hover:text-gray-700"
-          >
-            Cancel
-          </button>
-        </div>
+        <CardContent className="text-center py-4">
+          <div className="animate-pulse">Authenticating...</div>
+        </CardContent>
       )}
 
       {status === "success" && (
-        <div className="text-center py-8 space-y-4">
-          <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100">
-            <svg
-              className="h-6 w-6 text-green-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
-          </div>
-          <p className="text-lg font-medium text-gray-700">
-            Authentication successful!
-          </p>
-          <p className="text-gray-500">Redirecting to dashboard...</p>
-        </div>
+        <CardContent className="text-center py-4">
+          <div className="text-green-600">Successfully authenticated!</div>
+        </CardContent>
       )}
 
       {status === "error" && (
-        <div className="text-center py-8 space-y-4">
-          <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
-            <svg
-              className="h-6 w-6 text-red-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </div>
-          <p className="text-lg font-medium text-gray-700">
-            Authentication failed
-          </p>
-          <p className="text-red-500">{error}</p>
-          <button
-            onClick={() => {
-              isAuthenticating.current = false;
-              setStatus("idle");
-            }}
-            className="mt-4 w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Try Again
-          </button>
-
-          {/* Add Reset Credentials button */}
-          <button
-            onClick={handleResetCredentials}
-            className="mt-2 w-full py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Reset Credentials
-          </button>
-
-          <a
-            href="/register"
-            className="block mt-2 text-sm text-indigo-600 hover:text-indigo-500"
-          >
-            Register a New Passkey
-          </a>
-        </div>
+        <CardContent className="text-center py-4">
+          <div className="text-destructive">{error}</div>
+        </CardContent>
       )}
-    </div>
+    </Card>
   );
 }

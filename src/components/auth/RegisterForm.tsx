@@ -3,6 +3,17 @@
 import { useState } from "react";
 import { startRegistration } from "@simplewebauthn/browser";
 
+// Import shadcn/ui components
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardHeader,
+  CardContent,
+  CardFooter,
+} from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+
 export default function RegisterForm() {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -86,136 +97,80 @@ export default function RegisterForm() {
   }
 
   return (
-    <div className="w-full max-w-md mx-auto p-6 bg-white rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-6 text-center text-gray-800">
-        Register with Passkey
-      </h2>
+    <Card className="w-full max-w-md mx-auto">
+      <CardHeader>
+        <h2 className="text-2xl font-bold text-center">
+          Register with Passkey
+        </h2>
+      </CardHeader>
 
       {status === "idle" && (
-        <form onSubmit={handleRegister} className="space-y-4">
-          <div className="space-y-2">
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-gray-700"
-            >
-              Email
-            </label>
-            <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
+        <form onSubmit={handleRegister}>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                type="email"
+                id="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
 
-          <div className="space-y-2">
-            <label
-              htmlFor="displayName"
-              className="block text-sm font-medium text-gray-700"
-            >
-              Display Name (optional)
-            </label>
-            <input
-              type="text"
-              id="displayName"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Register
-          </button>
+            <Button type="submit" className="w-full">
+              Register
+            </Button>
+          </CardContent>
         </form>
       )}
 
       {status === "registering" && (
-        <div className="text-center py-8 space-y-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
-          <p className="text-gray-700">Creating your passkey...</p>
-          <p className="text-sm text-gray-500">
+        <CardContent className="text-center py-8 space-y-4">
+          <div className="flex justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary" />
+          </div>
+          <p>Creating your passkey...</p>
+          <p className="text-sm text-muted-foreground">
             Follow the prompts from your browser or device.
           </p>
-        </div>
+        </CardContent>
       )}
 
       {status === "success" && (
-        <div className="text-center py-8 space-y-4">
-          <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100">
-            <svg
-              className="h-6 w-6 text-green-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
-          </div>
-          <p className="text-lg font-medium text-gray-700">
-            Registration successful!
-          </p>
-          <p className="text-gray-500">
+        <CardContent className="text-center py-8 space-y-4">
+          <div className="text-green-600 text-lg">Registration successful!</div>
+          <p className="text-muted-foreground">
             You can now sign in with your passkey.
           </p>
-          <button
+          <Button
             onClick={() => (window.location.href = "/login")}
-            className="mt-4 w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+            className="w-full"
           >
             Go to Login
-          </button>
-        </div>
+          </Button>
+        </CardContent>
       )}
 
       {status === "error" && (
-        <div className="text-center py-8 space-y-4">
-          <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
-            <svg
-              className="h-6 w-6 text-red-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </div>
-          <p className="text-lg font-medium text-gray-700">
-            Registration failed
-          </p>
-          <p className="text-red-500">{error}</p>
-          <button
-            onClick={() => setStatus("idle")}
-            className="mt-4 w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
+        <CardContent className="text-center py-8 space-y-4">
+          <div className="text-destructive text-lg">Registration failed</div>
+          <p className="text-destructive">{error}</p>
+          <Button onClick={() => setStatus("idle")} className="w-full">
             Try Again
-          </button>
+          </Button>
 
-          {/* Add Reset Credentials button */}
           {error && error.includes("duplicate key") && (
-            <button
+            <Button
               onClick={handleResetCredentials}
-              className="mt-2 w-full py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              variant="outline"
+              className="w-full mt-2"
             >
               Reset Existing Credentials
-            </button>
+            </Button>
           )}
-        </div>
+        </CardContent>
       )}
-    </div>
+    </Card>
   );
 }
