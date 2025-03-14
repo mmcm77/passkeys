@@ -1,12 +1,12 @@
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import RegisterForm from "@/components/auth/RegisterForm";
+import LoginForm from "@/components/auth/LoginForm";
+import AuthContainer from "@/components/auth/AuthContainer";
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24">
-      <div className="max-w-5xl w-full items-center justify-center flex flex-col">
-        <div className="text-center space-y-4 mb-8">
+    <main className="w-full">
+      <div className="max-w-6xl mx-auto px-6 pt-8 md:px-24 md:pt-12">
+        <div className="text-center space-y-4 mb-4">
           <h1 className="text-4xl font-bold">Passkey Authentication System</h1>
           <p className="text-muted-foreground max-w-md mx-auto">
             A modern authentication system using passkeys for secure,
@@ -14,14 +14,14 @@ export default function Home() {
             and SimpleWebAuthn.
           </p>
         </div>
+        {/* 
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full mb-8">
+          <RegisterForm />
+          <LoginForm />
+        </div> */}
 
-        <div className="flex gap-4 mb-16">
-          <Button asChild>
-            <Link href="/register">Register</Link>
-          </Button>
-          <Button variant="outline" asChild>
-            <Link href="/login">Login</Link>
-          </Button>
+        <div className="max-w-md mx-auto">
+          <AuthContainer />
         </div>
       </div>
     </main>

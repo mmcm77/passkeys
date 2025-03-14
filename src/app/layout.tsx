@@ -43,19 +43,10 @@ export default function RootLayout({
         {/* Initialize WebAuthn as early as possible */}
         <WebAuthnInit />
         <div className="relative flex min-h-screen flex-col">
-          <header className="border-b">
-            <div className="container flex h-16 items-center justify-between py-4">
-              <AuthStatus />
-            </div>
-          </header>
-          <main className="flex-1">{children}</main>
-          <footer className="border-t py-6">
-            <div className="container flex items-center justify-center">
-              <p className="text-sm text-muted-foreground">
-                &copy; {new Date().getFullYear()} Passkey Authentication System
-              </p>
-            </div>
-          </footer>
+          <div className="absolute top-4 right-4 md:top-8 md:right-8 z-10">
+            <AuthStatus />
+          </div>
+          {children}
         </div>
       </body>
     </html>

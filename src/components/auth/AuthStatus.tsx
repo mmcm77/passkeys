@@ -44,17 +44,5 @@ export default function AuthStatus() {
     return null;
   }
 
-  return (
-    <div className="flex items-center gap-4">
-      {user && (
-        <span className="text-sm text-gray-600">Signed in as {user.email}</span>
-      )}
-      <button
-        onClick={handleLogout}
-        className="text-sm text-red-600 hover:text-red-800"
-      >
-        Sign out
-      </button>
-    </div>
-  );
+  return <div className="flex items-center gap-4"></div>;
 }
