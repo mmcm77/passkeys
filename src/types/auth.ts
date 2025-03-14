@@ -56,3 +56,17 @@ export interface StoredCredential {
   credentialPublicKey: string;
   counter: number;
 }
+
+export interface BrowserCapabilities {
+  supportsWebAuthn: boolean;
+  supportsConditionalUI: boolean;
+  platformAuthenticator: boolean;
+  isMobile: boolean;
+  browserName: string;
+}
+
+export interface ConditionalAuthState {
+  active: boolean;
+  status: "idle" | "waiting" | "authenticating" | "success" | "error";
+  error?: string;
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Card,
   CardHeader,
@@ -28,6 +28,7 @@ import { RecentEmails } from "./RecentEmails";
 import { addRecentEmail } from "@/lib/recentEmails";
 import { ConditionalAuth } from "./ConditionalAuth";
 import { PasskeyIndicator } from "../ui/PasskeyIndicator";
+import type { ConditionalAuthState } from "@/types/auth";
 
 type AuthState =
   | "initial"
@@ -137,6 +138,12 @@ export default function AuthContainer({
   const [isConditionalAuthEnabled, setIsConditionalAuthEnabled] =
     useState(false);
 
+  const [conditionalAuthState, setConditionalAuthState] =
+    useState<ConditionalAuthState>({
+      active: false,
+      status: "idle",
+    });
+
   // Handle animation states with transition tracking
   useEffect(() => {
     if (authState !== "initial") {
@@ -193,6 +200,33 @@ export default function AuthContainer({
     };
     checkConditionalSupport();
   }, []);
+
+  // Handle conditional auth state changes
+  const handleConditionalAuthStateChange = useCallback(
+    (state: ConditionalAuthState) => {
+      console.log("Conditional auth state changed:", state);
+      setConditionalAuthState(state);
+    },
+    []
+  );
+
+  // Effect to handle conditional auth state updates
+  useEffect(() => {
+    // Update UI state based on conditional auth status
+    switch (conditionalAuthState.status) {
+      case "authenticating":
+        setAuthState("submitting");
+        break;
+      case "success":
+        setAuthState("authenticated");
+        break;
+      case "error":
+        if (conditionalAuthState.error) {
+          handleError(new Error(conditionalAuthState.error));
+        }
+        break;
+    }
+  }, [conditionalAuthState]);
 
   const validateEmailFormat = (email: string): ValidationResult => {
     // Basic email format validation
@@ -257,6 +291,9 @@ export default function AuthContainer({
     } else {
       setError(null);
     }
+
+    // Ensure the input event is triggered for conditional UI
+    e.target.dispatchEvent(new Event("input", { bubbles: true }));
   };
 
   const handleError = (error: unknown) => {
@@ -585,8 +622,6 @@ export default function AuthContainer({
   // Handle conditional auth success
   const handleConditionalAuthSuccess = async (credential: any) => {
     try {
-      setAuthState("submitting");
-      // Verify the credential with your server
       const verificationResponse = await fetch("/api/auth/verify", {
         method: "POST",
         headers: {
@@ -601,9 +636,22 @@ export default function AuthContainer({
 
       const result = await verificationResponse.json();
 
-      if (result.verified) {
-        setAuthState("authenticated");
-        onAuthSuccess?.(result.user);
+      if (result.verified && result.user) {
+        const user: AuthenticatedUser = {
+          userId: result.user.id,
+          email: result.user.email,
+          hasPasskey: true,
+          passkeyCount: result.user.passkeyCount || 1,
+          lastPasskeyAddedAt: result.user.lastPasskeyAddedAt,
+          deviceTypes: result.user.deviceTypes,
+        };
+        setAuthenticatedUser(user);
+        onAuthSuccess?.(user);
+
+        // Add to recent emails if not already present
+        if (result.user.email) {
+          addRecentEmail(result.user.email);
+        }
       }
     } catch (error) {
       handleError(error);
@@ -617,6 +665,38 @@ export default function AuthContainer({
       handleError(error);
     }
   };
+
+  // Handle conditional auth not supported
+  const handleConditionalAuthNotSupported = () => {
+    setConditionalAuthState((prev) => ({ ...prev, active: false }));
+  };
+
+  // Update the handleEmailSelection function
+  const handleEmailSelection = useCallback(
+    (selectedEmail: string) => {
+      console.log("Email selected:", selectedEmail);
+
+      // Update state
+      setEmail(selectedEmail);
+
+      // Directly submit form after a brief delay to allow state update
+      setTimeout(() => {
+        // Find the actual form element
+        const form = document.querySelector("form");
+        if (form) {
+          // Create a synthetic submit event
+          const submitEvent = new Event("submit", {
+            bubbles: true,
+            cancelable: true,
+          });
+
+          // Directly call the handleSubmit function bound to the form
+          form.dispatchEvent(submitEvent);
+        }
+      }, 50);
+    },
+    [setEmail]
+  );
 
   const renderAuthStateContent = () => {
     const baseTransition =
@@ -918,12 +998,7 @@ export default function AuthContainer({
         return (
           <div className={fadeIn}>
             <div className="space-y-4">
-              <RecentEmails
-                onSelect={(email) => {
-                  setEmail(email);
-                  setSelectedRecentEmail(email); // Trigger the effect
-                }}
-              />
+              <RecentEmails onSelect={handleEmailSelection} />
               <div className="space-y-2">
                 <Label
                   htmlFor="auth-email"
@@ -940,16 +1015,7 @@ export default function AuthContainer({
                     name="email"
                     placeholder="Enter your email"
                     value={email}
-                    onChange={(e) => {
-                      const newEmail = e.target.value;
-                      setEmail(newEmail);
-                      setIsDirty(true);
-                      if (newEmail.trim()) {
-                        validateEmail(newEmail, true);
-                      } else {
-                        setError(null);
-                      }
-                    }}
+                    onChange={handleEmailChange}
                     onBlur={() => {
                       setIsDirty(true);
                       if (email) validateEmail(email);
@@ -1015,12 +1081,13 @@ export default function AuthContainer({
   return (
     <Card className="w-full max-w-md mx-auto">
       <CardHeader className="space-y-1">
-        {isConditionalAuthEnabled && (
-          <ConditionalAuth
-            onAuthSuccess={handleConditionalAuthSuccess}
-            onAuthError={handleConditionalAuthError}
-          />
-        )}
+        <ConditionalAuth
+          onAuthSuccess={handleConditionalAuthSuccess}
+          onAuthError={handleConditionalAuthError}
+          onNotSupported={handleConditionalAuthNotSupported}
+          onStateChange={handleConditionalAuthStateChange}
+          emailInputId="auth-email"
+        />
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-semibold tracking-tight">
             {mode === "signin" ? "Welcome back" : "Create an account"}
