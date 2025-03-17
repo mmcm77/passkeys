@@ -10,13 +10,19 @@ export async function storeCredential(
     ...credentialData,
   };
 
+  // Generate a unique webauthn_user_id to avoid constraint violations
+  // This allows multiple devices for the same user
+  const uniqueWebauthnId = `${
+    credentialData.userId
+  }_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+
   // Map to snake_case for the database
   const dbCredential = {
     id: newCredential.id,
     user_id: newCredential.userId,
     credential_id: newCredential.credentialId,
     credential_public_key: newCredential.credentialPublicKey,
-    webauthn_user_id: newCredential.webauthnUserId,
+    webauthn_user_id: uniqueWebauthnId, // Use the unique identifier instead of userId
     counter: newCredential.counter,
     device_type: newCredential.deviceType,
     backed_up: newCredential.backedUp,
@@ -37,6 +43,8 @@ export async function storeCredential(
     throw new Error(`Failed to store credential: ${error.message}`);
   }
 
+  // Return the credential with the original webauthn_user_id from params
+  // This ensures compatibility with existing code that expects webauthnUserId to be userId
   return newCredential;
 }
 
@@ -150,6 +158,8 @@ export async function getCredentialsByEmail(
 export async function getCredentialsByUserId(
   userId: string
 ): Promise<Credential[]> {
+  // We specifically look only by user_id now, not by webauthn_user_id
+  // since we're generating unique webauthn_user_id values for each credential
   const { data, error } = await supabase
     .from("credentials")
     .select("*")
@@ -166,7 +176,7 @@ export async function getCredentialsByUserId(
     userId: item.user_id,
     credentialId: item.credential_id,
     credentialPublicKey: item.credential_public_key,
-    webauthnUserId: item.webauthn_user_id,
+    webauthnUserId: item.user_id, // Use user_id for consistency in client code
     counter: item.counter,
     deviceType: item.device_type,
     backedUp: item.backed_up,

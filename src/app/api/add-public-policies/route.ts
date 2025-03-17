@@ -5,20 +5,31 @@ export async function GET() {
   try {
     // Add policies for public registration
     const addPoliciesQuery = `
+      -- Drop existing policies first to avoid errors
+      DROP POLICY IF EXISTS "Allow public registration" ON users;
+      DROP POLICY IF EXISTS "Allow public challenge creation" ON challenges;
+      DROP POLICY IF EXISTS "Allow public challenge reading" ON challenges;
+      DROP POLICY IF EXISTS "Allow public session creation" ON sessions;
+      DROP POLICY IF EXISTS "Allow public device credential creation" ON device_credentials;
+      
       -- Allow public registration
-      CREATE POLICY IF NOT EXISTS "Allow public registration" ON users
+      CREATE POLICY "Allow public registration" ON users
         FOR INSERT WITH CHECK (true);
       
       -- Allow public challenge creation (needed for registration)
-      CREATE POLICY IF NOT EXISTS "Allow public challenge creation" ON challenges
+      CREATE POLICY "Allow public challenge creation" ON challenges
         FOR INSERT WITH CHECK (true);
         
       -- Allow public challenge reading (needed for registration)
-      CREATE POLICY IF NOT EXISTS "Allow public challenge reading" ON challenges
+      CREATE POLICY "Allow public challenge reading" ON challenges
         FOR SELECT USING (true);
         
       -- Allow public session creation (needed for login)
-      CREATE POLICY IF NOT EXISTS "Allow public session creation" ON sessions
+      CREATE POLICY "Allow public session creation" ON sessions
+        FOR INSERT WITH CHECK (true);
+        
+      -- Allow public device credential creation (needed for device recognition)
+      CREATE POLICY "Allow public device credential creation" ON device_credentials
         FOR INSERT WITH CHECK (true);
     `;
 

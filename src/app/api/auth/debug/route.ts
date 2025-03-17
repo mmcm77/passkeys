@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
 
       // Get hex representation
       hexRepresentation = buffer.toString("hex");
-    } catch (error) {
-      // Handle conversion errors
+    } catch {
+      // Silently handle conversion errors
     }
 
     return NextResponse.json({

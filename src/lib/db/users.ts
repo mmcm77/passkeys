@@ -64,34 +64,65 @@ export async function getUserById(userId: string): Promise<User | null> {
 
 // Get a user by email
 export async function getUserByEmail(email: string): Promise<User | null> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("email", email)
-    .single();
+  try {
+    // Use the SQL query approach with explicit format specifier
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", email)
+      .limit(1);
 
-  if (error) {
-    // If the error is "No rows found", return null
-    if (error.code === "PGRST116") {
+    if (error) {
+      console.error("Error fetching user by email:", error);
       return null;
     }
 
-    console.error("Error fetching user by email:", error);
+    // Handle empty result
+    if (!data || data.length === 0) {
+      return null;
+    }
+
+    // Map from snake_case to camelCase (get first result)
+    const userData = data[0];
+    return {
+      id: userData.id,
+      email: userData.email,
+      displayName: userData.display_name,
+      createdAt: userData.created_at,
+      updatedAt: userData.updated_at,
+    };
+  } catch (error) {
+    console.error("Exception fetching user by email:", error);
+    return null;
+  }
+}
+
+// Add function to get a user with their credential count
+export async function getUserWithCredentials(email: string) {
+  if (!email) return null;
+
+  // First get the user
+  const user = await getUserByEmail(email);
+  if (!user) return null;
+
+  // Then get their credentials
+  const { data: credentials, error } = await supabase
+    .from("credentials")
+    .select("id, created_at")
+    .eq("user_id", user.id);
+
+  if (error) {
+    console.error("Error fetching credentials:", error);
     return null;
   }
 
-  // Map from snake_case to camelCase
-  if (data) {
-    return {
-      id: data.id,
-      email: data.email,
-      displayName: data.display_name,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    };
-  }
-
-  return null;
+  return {
+    ...user,
+    passkeyCount: credentials?.length || 0,
+    lastPasskeyAddedAt: credentials?.length
+      ? Math.max(...credentials.map((c) => new Date(c.created_at).getTime()))
+      : null,
+  };
 }
 
 // Update a user
@@ -100,7 +131,7 @@ export async function updateUser(
   userData: Partial<Omit<User, "id" | "createdAt">>
 ): Promise<User | null> {
   // Map from camelCase to snake_case
-  const dbUserData: any = {};
+  const dbUserData: Record<string, unknown> = {};
   if (userData.displayName !== undefined)
     dbUserData.display_name = userData.displayName;
   if (userData.updatedAt !== undefined)

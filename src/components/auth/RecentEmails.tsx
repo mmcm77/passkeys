@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
   getRecentEmails,
@@ -6,19 +6,29 @@ import {
   RECENT_EMAILS_UPDATED,
   getDebugLogs,
 } from "@/lib/recentEmails";
-import { User, XCircle, Loader2, Bug } from "lucide-react";
+import { User, XCircle, Loader2, Bug, KeyIcon } from "lucide-react";
+import { checkEmailsWithPasskeysOnDevice } from "@/lib/recentEmails";
+
+// Import the DebugLogEntry type from recentEmails
+import type { DebugLogEntry } from "@/lib/recentEmails";
 
 interface RecentEmailsProps {
   onSelect: (email: string) => void;
 }
 
-export function RecentEmails({ onSelect }: RecentEmailsProps) {
+export function RecentEmails({
+  onSelect,
+}: RecentEmailsProps): React.ReactElement | null {
   const [recentEmails, setRecentEmails] = useState<
     Array<{ email: string; lastUsed: number }>
   >([]);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState(false);
-  const [debugLogs, setDebugLogs] = useState<any[]>([]);
+  const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
+  const [emailsWithPasskeys, setEmailsWithPasskeys] = useState<
+    Record<string, boolean>
+  >({});
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     // Load initial emails
@@ -39,7 +49,26 @@ export function RecentEmails({ onSelect }: RecentEmailsProps) {
     };
   }, []);
 
-  const handleRemove = (email: string, e: React.MouseEvent) => {
+  useEffect(() => {
+    const checkPasskeys = async () => {
+      setIsLoading(true);
+      const emails = recentEmails.map((e) => e.email);
+      const results = await checkEmailsWithPasskeysOnDevice(emails);
+      setEmailsWithPasskeys(results);
+      setIsLoading(false);
+    };
+
+    if (recentEmails.length > 0) {
+      void checkPasskeys();
+    } else {
+      setIsLoading(false);
+    }
+  }, [recentEmails]);
+
+  const handleRemove = (
+    email: string,
+    e: React.MouseEvent<HTMLButtonElement>
+  ) => {
     e.stopPropagation();
     removeRecentEmail(email);
   };
@@ -49,7 +78,7 @@ export function RecentEmails({ onSelect }: RecentEmailsProps) {
     onSelect(email);
   };
 
-  if (recentEmails.length === 0) return null;
+  if (recentEmails.length === 0 || isLoading) return null;
 
   return (
     <div className="space-y-2 mb-4">
@@ -115,6 +144,9 @@ export function RecentEmails({ onSelect }: RecentEmailsProps) {
               <p className="text-xs text-muted-foreground">
                 Last used: {new Date(lastUsed).toLocaleDateString()}
               </p>
+              {emailsWithPasskeys[email] && (
+                <KeyIcon size={16} className="text-green-500" />
+              )}
             </div>
             {selectedEmail !== email && (
               <Button

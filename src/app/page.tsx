@@ -1,5 +1,3 @@
-import RegisterForm from "@/components/auth/RegisterForm";
-import LoginForm from "@/components/auth/LoginForm";
 import AuthContainer from "@/components/auth/AuthContainer";
 
 export default function Home() {

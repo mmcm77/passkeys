@@ -1,4 +1,3 @@
-import { NextRequest } from "next/server";
 import { generateAuthenticationOptions } from "@simplewebauthn/server";
 import { getWebAuthnCapabilities } from "@/lib/auth/browser-detection";
 import { prepareConditionalAuth } from "@/lib/auth/conditional-webauthn";
@@ -7,7 +6,7 @@ import { prepareConditionalAuth } from "@/lib/auth/conditional-webauthn";
  * POST /api/auth/discover
  * Returns authentication options for credential discovery without prior email
  */
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
     // Generate base authentication options for discovery
     const options = await generateAuthenticationOptions({
@@ -30,7 +29,7 @@ export async function POST(request: NextRequest) {
     });
 
     return Response.json(enhancedOptions);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Credential discovery error:", error);
     return Response.json(
       { error: "Failed to generate discovery options" },

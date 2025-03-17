@@ -33,9 +33,9 @@ export default function PasskeyList() {
         }
         const data = await response.json();
         setCredentials(data.credentials);
-      } catch (err) {
+      } catch (error) {
         setError(
-          err instanceof Error ? err.message : "Failed to load passkeys"
+          error instanceof Error ? error.message : "Failed to load passkeys"
         );
       } finally {
         setIsLoading(false);
@@ -130,8 +130,8 @@ export default function PasskeyList() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Remove Passkey</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Are you sure you want to remove this passkey? You won't be
-                      able to use it to sign in anymore.
+                      Are you sure you want to remove this passkey? You
+                      won&apos;t be able to use it to sign in anymore.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>

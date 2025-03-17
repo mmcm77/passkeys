@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Card,
   CardHeader,
@@ -9,25 +9,33 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { addRecentEmail, getRecentEmails } from "@/lib/recentEmails";
+import { PasskeyIndicator } from "../ui/PasskeyIndicator";
 import {
-  Loader2,
-  CheckCircle2,
-  AlertCircle,
-  XCircle,
-  RefreshCcw,
-  ArrowLeft,
-} from "lucide-react";
+  storeDeviceCredential,
+  getCredentialsForCurrentDevice,
+  updateDeviceCredentialUsage,
+} from "@/lib/db/device-credentials";
+import { getUserWithCredentials, getUserByEmail } from "@/lib/db/users";
+import { PasskeyLoginButton } from "./PasskeyLoginButton";
+import { AuthenticatedState } from "./AuthenticatedState";
+import { NewDeviceRegistration } from "./NewDeviceRegistration";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
 import {
   startAuthentication,
-  browserSupportsWebAuthn,
   startRegistration,
 } from "@simplewebauthn/browser";
-import { getWebAuthnCapabilities } from "@/lib/auth/browser-detection";
-import { RecentEmails } from "./RecentEmails";
-import { addRecentEmail } from "@/lib/recentEmails";
-import { PasskeyIndicator } from "../ui/PasskeyIndicator";
-import type { ConditionalAuthState } from "@/types/auth";
+import { getBrowserInfo, detectDeviceType } from "@/lib/auth/browser-detection";
 
 type AuthState =
   | "initial"
@@ -57,7 +65,7 @@ interface UserExistsResponse {
 interface ErrorResponse {
   error: string;
   code: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
   timestamp: string;
   requestId?: string;
 }
@@ -95,535 +103,398 @@ type VerificationStatus = {
 
 interface AuthenticationState {
   challengeId: string;
-  options: any;
+  options: Record<string, unknown>;
+}
+
+// User interface for selected user
+interface SelectedUser {
+  id: string;
+  email: string;
+  displayName?: string;
+  hasPasskeys?: boolean;
 }
 
 export default function AuthContainer({
   defaultMode = "signin",
   onAuthSuccess,
 }: AuthContainerProps) {
-  // Enhanced state management
+  // State variables
   const [mode, setMode] = useState<"signin" | "register">(defaultMode);
   const [email, setEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isDirty, setIsDirty] = useState(false);
   const [authState, setAuthState] = useState<AuthState>("initial");
-  const [errorDetails, setErrorDetails] = useState<AuthError | null>(null);
-  const [isAnimating, setIsAnimating] = useState(false);
-
-  // New state variables for enhanced user status tracking
-  const [verificationStatus, setVerificationStatus] =
-    useState<VerificationStatus | null>(null);
   const [authenticatedUser, setAuthenticatedUser] =
     useState<AuthenticatedUser | null>(null);
-  const [isNewUserRegistration, setIsNewUserRegistration] = useState(false);
-  const [lastAttemptTimestamp, setLastAttemptTimestamp] = useState<
-    number | null
-  >(null);
 
-  // Track API response timing for security
-  const [apiResponseTime, setApiResponseTime] = useState<number | null>(null);
-
-  // Add authentication functions
-  const [authenticationState, setAuthenticationState] =
-    useState<AuthenticationState | null>(null);
-
-  // Add effect to handle recent email selection
-  const [selectedRecentEmail, setSelectedRecentEmail] = useState<string | null>(
-    null
-  );
-
-  const [isConditionalAuthEnabled, setIsConditionalAuthEnabled] =
+  // Add state for new device registration
+  const [showNewDeviceRegistration, setShowNewDeviceRegistration] =
     useState(false);
-  const isInitializingConditional = useRef(false);
-  const currentChallenge = useRef<{ options: any; challengeId: string } | null>(
-    null
-  );
+  const [userForNewDevice, setUserForNewDevice] = useState<{
+    userId: string;
+    email: string;
+  } | null>(null);
 
-  // Add form reference
-  const formRef = useRef<HTMLFormElement>(null);
-  const emailInputRef = useRef<HTMLInputElement>(null);
+  // Add a new state for tracking the authentication flow
+  const [authFlow, setAuthFlow] = useState<
+    "default" | "newDevice" | "passwordFallback"
+  >("default");
+  const [selectedUser, setSelectedUser] = useState<SelectedUser | null>(null);
 
-  // Handle animation states with transition tracking
+  // Add a new state for tracking device recognition
+  const [deviceRecognized, setDeviceRecognized] = useState(false);
+  const [deviceCredentials, setDeviceCredentials] = useState<string[]>([]);
+  const [isCheckingDevice, setIsCheckingDevice] = useState(false);
+
+  // Add form schema for email validation
+  const formSchema = z.object({
+    email: z.string().email("Please enter a valid email address"),
+  });
+
+  // Add form hook
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      email: email || "",
+    },
+  });
+
+  // Update form value when email changes
   useEffect(() => {
-    if (authState !== "initial") {
-      setIsAnimating(true);
-      const timer = setTimeout(() => setIsAnimating(false), 500);
-      return () => clearTimeout(timer);
+    if (email) {
+      form.setValue("email", email);
     }
-  }, [authState]);
+  }, [email, form]);
 
-  // Add new effect to prevent animations during biometric confirmation
+  // Add a new effect for device recognition when email changes
   useEffect(() => {
-    if (authState === "registering") {
-      setIsAnimating(false);
-    }
-  }, [authState]);
-
-  // Reset verification status when mode changes
-  useEffect(() => {
-    if (mode === "signin" || !isNewUserRegistration) {
-      setVerificationStatus(null);
-      setAuthenticatedUser(null);
-      setError(null);
-      setErrorDetails(null);
-      setTimeout(() => {
-        setAuthState("initial");
-      }, 300);
-    }
-  }, [mode]);
-
-  // Handle API response timing
-  useEffect(() => {
-    if (lastAttemptTimestamp && apiResponseTime) {
-      const responseDelay = Date.now() - lastAttemptTimestamp;
-      // If response is too quick (< 500ms) or too slow (> 3000ms), show warning
-      if (responseDelay < 500 || responseDelay > 3000) {
-        console.warn("Unusual API response time detected:", responseDelay);
-      }
-    }
-  }, [lastAttemptTimestamp, apiResponseTime]);
-
-  // Add effect to handle recent email selection
-  useEffect(() => {
-    if (selectedRecentEmail) {
-      handleSubmit({ preventDefault: () => {} } as React.FormEvent);
-      setSelectedRecentEmail(null); // Reset after handling
-    }
-  }, [selectedRecentEmail]);
-
-  // Add effect to check for conditional auth support and initialize
-  useEffect(() => {
-    async function initializeConditionalUI() {
-      if (isInitializingConditional.current) return;
-      isInitializingConditional.current = true;
+    const checkDeviceCredentials = async () => {
+      if (!email) return;
+      setIsCheckingDevice(true);
 
       try {
-        const response = await fetch("/api/auth/authenticate/options", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: "" }), // Empty email for conditional UI
-        });
-
-        if (!response.ok) {
-          console.log("Failed to get auth options:", await response.text());
+        const user = await getUserByEmail(email);
+        if (!user) {
+          setDeviceRecognized(false);
+          setDeviceCredentials([]);
+          setIsCheckingDevice(false);
           return;
         }
 
-        const authData = await response.json();
-        currentChallenge.current = authData;
+        const credentialIds = await getCredentialsForCurrentDevice(user.id);
+        setDeviceCredentials(credentialIds);
+        setDeviceRecognized(credentialIds.length > 0);
+      } catch (error) {
+        console.error("Error checking device credentials:", error);
+        setDeviceRecognized(false);
+      } finally {
+        setIsCheckingDevice(false);
+      }
+    };
 
-        const { options } = authData;
-        try {
-          const credential = await startAuthentication({
-            optionsJSON: {
-              ...options,
-              mediation: "conditional",
-            },
-            useBrowserAutofill: true,
-          });
+    checkDeviceCredentials();
+  }, [email]);
 
-          // If we get here, a passkey was selected
-          console.log("Passkey selected through conditional UI");
+  // Add useEffect to initialize device check with most recent email
+  useEffect(() => {
+    // This effect only runs in the browser
+    if (typeof window === "undefined") return;
 
-          const verificationResponse = await fetch(
-            "/api/auth/authenticate/verify",
-            {
+    // Check for recent emails on component mount
+    const recentEmails = getRecentEmails();
+    if (recentEmails.length > 0) {
+      const mostRecentEmail = recentEmails[0]?.email || "";
+
+      // Only proceed if we have an email
+      if (mostRecentEmail) {
+        console.log("Auto-populating with recent email:", mostRecentEmail);
+        setEmail(mostRecentEmail);
+        form.setValue("email", mostRecentEmail);
+
+        // Check if this device is recognized for the most recent email
+        const checkDeviceForRecentEmail = async () => {
+          setIsCheckingDevice(true);
+          try {
+            const response = await fetch("/api/auth/device-passkeys", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                credential,
-                challengeId: currentChallenge.current?.challengeId,
-              }),
+              body: JSON.stringify({ email: mostRecentEmail }),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+
+              // If it was a server-side check, we need to verify on client-side
+              if (data.isServerSideCheck) {
+                console.log(
+                  "Server-side check detected, performing client-side check"
+                );
+                // Directly check device credentials using the client-side functionality
+                const user = await getUserByEmail(mostRecentEmail);
+                if (user) {
+                  const credentialIds = await getCredentialsForCurrentDevice(
+                    user.id
+                  );
+                  setDeviceCredentials(credentialIds);
+                  setDeviceRecognized(credentialIds.length > 0);
+                }
+              } else {
+                console.log(
+                  "Device recognition check:",
+                  data.hasPasskeysOnDevice
+                );
+                setDeviceRecognized(data.hasPasskeysOnDevice);
+              }
             }
-          );
+          } catch (error) {
+            console.error("Error checking device recognition:", error);
+          } finally {
+            setIsCheckingDevice(false);
+          }
+        };
 
-          if (!verificationResponse.ok) {
-            throw new Error("Failed to verify credential");
-          }
-
-          const result = await verificationResponse.json();
-          if (result.authenticated && result.user) {
-            const user: AuthenticatedUser = {
-              userId: result.user.id,
-              email: result.user.email,
-              hasPasskey: true,
-              passkeyCount: result.user.passkeyCount || 1,
-              lastPasskeyAddedAt: result.user.lastPasskeyAddedAt,
-              deviceTypes: result.user.deviceTypes,
-            };
-            setAuthenticatedUser(user);
-            onAuthSuccess?.(user);
-            addRecentEmail(result.user.email);
-            setAuthState("authenticated");
-          }
-        } catch (error: any) {
-          if (error.name === "NotAllowedError") {
-            // User cancelled or no passkey selected - this is expected
-            console.log("User cancelled or no passkey selected");
-          } else if (error.name === "AbortError") {
-            // This is expected when the conditional UI is initialized
-            console.log("Conditional UI ready for user interaction");
-          } else {
-            console.error("Authentication error:", error);
-            handleError(error);
-          }
-        }
-      } catch (error: any) {
-        if (error.name !== "AbortError") {
-          console.error("Error initializing conditional UI:", error);
-        }
-      } finally {
-        isInitializingConditional.current = false;
+        checkDeviceForRecentEmail();
       }
     }
+  }, [form]);
 
-    async function checkAndInitialize() {
-      try {
-        if (
-          !window.PublicKeyCredential ||
-          !window.PublicKeyCredential.isConditionalMediationAvailable ||
-          !(await window.PublicKeyCredential.isConditionalMediationAvailable())
-        ) {
-          return;
-        }
-
-        const capabilities = await getWebAuthnCapabilities();
-        if (capabilities.hasConditionalMediation) {
-          setIsConditionalAuthEnabled(true);
-          await initializeConditionalUI();
-        }
-      } catch (error) {
-        console.error("Failed to check conditional auth support:", error);
-      }
-    }
-
-    // Start initialization
-    checkAndInitialize();
-
-    // Re-initialize on focus
-    const input = document.getElementById("auth-email");
-    if (input) {
-      input.addEventListener("focus", initializeConditionalUI);
-      return () => {
-        input.removeEventListener("focus", initializeConditionalUI);
-        isInitializingConditional.current = false;
-      };
-    }
-
-    return () => {
-      isInitializingConditional.current = false;
-    };
-  }, [onAuthSuccess]);
-
-  const validateEmailFormat = (email: string): ValidationResult => {
-    // More permissive email regex that still catches obvious errors
-    const emailRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-
-    if (!email.trim()) {
-      return {
-        isValid: false,
-        error: "Email is required",
-      };
-    }
-
-    if (!emailRegex.test(email.trim())) {
-      return {
-        isValid: false,
-        error: "Please enter a valid email address",
-      };
-    }
-
-    return {
-      isValid: true,
-      error: null,
-    };
-  };
-
-  const validateEmail = (
-    email: string,
-    shouldSetError = true
-  ): ValidationResult => {
-    const result = validateEmailFormat(email);
-
-    if (shouldSetError) {
-      setError(result.error);
-    }
-
-    return result;
-  };
-
-  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newEmail = e.target.value;
-    setEmail(newEmail);
-    setIsDirty(true);
-    setError(null); // Clear error on change
-  };
-
-  const handleError = (error: unknown) => {
-    setAuthState("error");
-
-    if (error instanceof Error) {
-      // Handle specific error types
-      if (error.message.includes("network")) {
-        setErrorDetails({
-          code: "NETWORK_ERROR",
-          message: "Unable to connect to the authentication service",
-          action: "Please check your internet connection and try again",
-        });
-      } else if (error.message.includes("timeout")) {
-        setErrorDetails({
-          code: "TIMEOUT_ERROR",
-          message: "The request took too long to complete",
-          action: "Please try again. If the problem persists, contact support",
-        });
-      } else {
-        setErrorDetails({
-          code: "UNKNOWN_ERROR",
-          message: error.message,
-          action: "Please try again or contact support if the problem persists",
-        });
-      }
-    } else {
-      setErrorDetails({
-        code: "UNEXPECTED_ERROR",
-        message: "An unexpected error occurred",
-        action: "Please try again later",
-      });
-    }
-  };
-
-  const handleRetry = () => {
-    setAuthState("initial");
-    setErrorDetails(null);
+  // Update the form submission handler
+  const handleSubmit = form.handleSubmit(async (data) => {
+    setIsSubmitting(true);
     setError(null);
-    setIsDirty(false);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // Get email directly from the ref
-    const emailValue = emailInputRef.current?.value || email;
-
-    console.log("Form submission with email:", emailValue);
-
-    // Reset states
-    setError(null);
-    setErrorDetails(null);
-    setVerificationStatus(null);
-    setAuthenticatedUser(null);
-    setIsNewUserRegistration(false);
-    setLastAttemptTimestamp(Date.now());
-
-    const trimmedEmail = emailValue.trim();
-
-    // Simple validation before proceeding
-    if (!trimmedEmail) {
-      setError("Email is required");
-      return;
-    }
-
-    // Use a simpler regex for validation
-    const simpleEmailRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-    if (!simpleEmailRegex.test(trimmedEmail)) {
-      setError("Please enter a valid email address");
-      return;
-    }
 
     try {
-      setAuthState("submitting");
-      setIsSubmitting(true);
+      const email = data.email;
 
-      const response = await fetch("/api/auth/check-user", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email: trimmedEmail,
-        }),
-      });
+      // Get user and check if they exist
+      const user = await getUserWithCredentials(email);
 
-      setApiResponseTime(Date.now());
-
-      if (!response.ok) {
-        const errorData: ErrorResponse = await response.json();
-        throw new Error(errorData.error);
-      }
-
-      const data = (await response.json()) as UserExistsResponse;
-      console.log("User check response:", data);
-      setVerificationStatus({
-        exists: data.exists,
-        hasPasskeys: data.hasPasskeys,
-        suggestedAction: data.suggestedAction || "register",
-        passkeyCount: data.passkeyCount || 0,
-        lastPasskeyAddedAt: data.lastPasskeyAddedAt,
-        deviceTypes: data.deviceTypes,
-      });
-
-      setAuthState("checking");
-
-      // Handle user state transitions
-      if (data.exists) {
-        if (mode === "register") {
-          // User exists but trying to register
-          handleError({
-            code: "EMAIL_IN_USE",
-            message: "This email is already registered",
-            action: "Would you like to sign in instead?",
-          });
-          setTimeout(() => {
-            setMode("signin");
-            setTimeout(() => handleRetry(), 300);
-          }, 2000);
-          return;
-        }
-
-        // Update authenticated user state
-        const user: AuthenticatedUser = {
-          userId: crypto.randomUUID(), // Placeholder until actual user ID is available
-          email,
-          hasPasskey: data.hasPasskeys,
-          passkeyCount: data.passkeyCount || 0,
-          lastPasskeyAddedAt: data.lastPasskeyAddedAt,
-          deviceTypes: data.deviceTypes,
-        };
-        setAuthenticatedUser(user);
-
-        // Show brief checking message before transitioning
-        setAuthState("checking");
-
-        // Brief delay for UI feedback
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-        // Transition based on passkey status
-        if (data.hasPasskeys) {
-          // Directly initiate authentication without success state
-          initiateAuthentication(email);
-        } else {
-          setAuthState("success"); // Show passkey setup prompt for users without passkeys
-        }
-      } else {
-        // New user case
-        setIsNewUserRegistration(true);
-        setAuthState("checking");
-
-        // Brief delay for UI feedback
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
-        // Create new user object
-        const newUser: AuthenticatedUser = {
-          userId: crypto.randomUUID(),
-          email,
-          hasPasskey: false,
-          passkeyCount: 0,
-        };
-        setAuthenticatedUser(newUser);
-
-        // Directly transition to registration without mode change
+      if (!user) {
+        // User doesn't exist, continue with registration
         setAuthState("registering");
         initiateRegistration(email);
+      } else {
+        // User exists, check if they have passkeys on this device
+        try {
+          const response = await fetch("/api/auth/device-passkeys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+
+          if (!response.ok) {
+            throw new Error("Failed to check device passkeys");
+          }
+
+          const data = await response.json();
+
+          let hasPasskeysOnDevice = data.hasPasskeysOnDevice;
+
+          // If it was a server-side check, verify on client-side
+          if (data.isServerSideCheck) {
+            console.log(
+              "Server-side check detected, performing client-side check"
+            );
+            const credentialIds = await getCredentialsForCurrentDevice(user.id);
+            hasPasskeysOnDevice = credentialIds.length > 0;
+            setDeviceCredentials(credentialIds);
+          }
+
+          if (hasPasskeysOnDevice) {
+            // Device is recognized, show one-click login
+            setDeviceRecognized(true);
+          } else {
+            // Device is not recognized, show new device flow
+            setSelectedUser(user);
+            setAuthFlow("newDevice");
+          }
+        } catch (error) {
+          console.error("Error checking device passkeys:", error);
+          // Fall back to new device flow on error
+          setSelectedUser(user);
+          setAuthFlow("newDevice");
+        }
       }
     } catch (error) {
-      console.error("Form submission failed:", error);
-      handleError(error);
+      console.error("Error during authentication:", error);
+      setError("Failed to authenticate. Please try again.");
+      handleError();
     } finally {
       setIsSubmitting(false);
     }
-  };
+  });
 
+  // Handle mode change
   const handleModeChange = () => {
     setMode(mode === "signin" ? "register" : "signin");
-    setError(null);
-    setErrorDetails(null);
-    setIsDirty(false);
-    setAuthState("initial");
-    setAuthenticatedUser(null);
   };
 
-  // Get input status classes
-  const getInputStatusClasses = () => {
-    if (!isDirty) return "w-full";
-    if (error)
-      return "w-full border-destructive focus-visible:ring-destructive";
-    if (email.trim())
-      return "w-full border-green-500 focus-visible:ring-green-500";
-    return "w-full";
+  // Handle error
+  const handleError = () => {
+    setAuthState("error");
+    // ... rest of your error handling logic
   };
 
-  // Add authentication functions
-  const initiateAuthentication = async (email: string) => {
-    try {
-      // Set registering state immediately to show full context UI
-      setAuthState("registering");
-      const response = await fetch("/api/auth/authenticate/options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
+  // Render auth state content
+  const renderAuthStateContent = () => {
+    // Show new device registration if needed
+    if (showNewDeviceRegistration && userForNewDevice) {
+      return (
+        <NewDeviceRegistration
+          email={userForNewDevice.email}
+          userId={userForNewDevice.userId}
+          onSuccess={(user) => {
+            // Update authenticated user
+            const authUser: AuthenticatedUser = {
+              userId: user.id,
+              email: user.email,
+              hasPasskey: true,
+              passkeyCount:
+                typeof user.passkeyCount === "number" ? user.passkeyCount : 1,
+              lastPasskeyAddedAt: Date.now(),
+              deviceTypes: Array.isArray(user.deviceTypes)
+                ? [...user.deviceTypes, detectDeviceType()]
+                : [detectDeviceType()],
+            };
 
-      if (!response.ok) {
-        throw new Error("Failed to get authentication options");
-      }
-
-      const optionsData = await response.json();
-      // Already in registering state, maintain UI context
-
-      // Start browser authentication - UI context remains
-      try {
-        const authResponse = await startAuthentication(optionsData.options);
-
-        // Send verification request - UI context still maintained
-        const verifyResponse = await fetch("/api/auth/authenticate/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            credential: authResponse,
-            challengeId: optionsData.challengeId,
-          }),
-        });
-
-        if (!verifyResponse.ok) {
-          const errorData = await verifyResponse.json();
-          throw new Error(
-            errorData.error || "Authentication verification failed"
-          );
-        }
-
-        const data = await verifyResponse.json();
-
-        // Only change state after successful verification
-        if (data.user) {
-          const user: AuthenticatedUser = {
-            userId: data.user.id,
-            email: data.user.email,
-            hasPasskey: true,
-            passkeyCount: verificationStatus?.passkeyCount || 1,
-            lastPasskeyAddedAt: verificationStatus?.lastPasskeyAddedAt,
-            deviceTypes: verificationStatus?.deviceTypes,
-          };
-          setAuthenticatedUser(user);
-          onAuthSuccess?.(user);
-          addRecentEmail(email);
-          setAuthState("authenticated");
-        }
-      } catch (error: any) {
-        if (error.name === "NotAllowedError") {
-          handleError(new Error("Authentication was cancelled"));
-        } else {
-          handleError(error);
-        }
-      }
-    } catch (error) {
-      console.error("Authentication failed:", error);
-      handleError(error);
+            setAuthenticatedUser(authUser);
+            setAuthState("authenticated");
+            onAuthSuccess?.(authUser);
+            addRecentEmail(user.email);
+            setShowNewDeviceRegistration(false);
+            setUserForNewDevice(null);
+          }}
+          onError={(error) => {
+            handleError();
+            setShowNewDeviceRegistration(false);
+            setUserForNewDevice(null);
+          }}
+          onCancel={() => {
+            setShowNewDeviceRegistration(false);
+            setUserForNewDevice(null);
+            setAuthState("initial");
+          }}
+        />
+      );
     }
+
+    if (authState === "initial") {
+      return (
+        <>
+          <div className="space-y-4">
+            {!deviceRecognized && (
+              // Show standard form when device is not recognized
+              <Form {...form}>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <FormField
+                    control={form.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="you@example.com"
+                            type="email"
+                            autoComplete="email webauthn"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={isCheckingDevice}
+                  >
+                    {isCheckingDevice ? "Checking..." : "Continue"}
+                  </Button>
+                </form>
+              </Form>
+            )}
+
+            {/* Show passkey login button if device is recognized - similar to example screenshot */}
+            {deviceRecognized && !isCheckingDevice && (
+              <div className="space-y-4">
+                <PasskeyLoginButton
+                  email={email}
+                  onSuccess={(user) => {
+                    // Update authenticated user
+                    const authUser: AuthenticatedUser = {
+                      userId: user.id,
+                      email: user.email,
+                      hasPasskey: true,
+                      passkeyCount:
+                        typeof user.passkeyCount === "number"
+                          ? user.passkeyCount
+                          : 1,
+                      lastPasskeyAddedAt: Date.now(),
+                      deviceTypes: Array.isArray(user.deviceTypes)
+                        ? [...user.deviceTypes, detectDeviceType()]
+                        : [detectDeviceType()],
+                    };
+
+                    // Update the usage timestamp of this credential
+                    if (user.credentialId) {
+                      updateDeviceCredentialUsage(user.id, user.credentialId);
+                    }
+
+                    setAuthenticatedUser(authUser);
+                    setAuthState("authenticated");
+                    onAuthSuccess?.(authUser);
+
+                    // Add to recent emails
+                    addRecentEmail(user.email);
+                  }}
+                  onError={handleError}
+                  buttonStyle="simplified"
+                />
+
+                <div className="text-center mt-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setDeviceRecognized(false);
+                    }}
+                    className="text-sm"
+                  >
+                    Not you? Use a different account
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      );
+    }
+
+    // Add the authenticated state case
+    if (authState === "authenticated" && authenticatedUser) {
+      return (
+        <AuthenticatedState
+          user={authenticatedUser}
+          onSignOut={() => {
+            setAuthState("initial");
+            setAuthenticatedUser(null);
+            setEmail("");
+          }}
+        />
+      );
+    }
+
+    // Default case
+    return (
+      <div className="text-center">
+        <p>Loading...</p>
+      </div>
+    );
   };
 
-  // Add registration function
+  // Update the initiateRegistration function to store device credential
   const initiateRegistration = async (email: string) => {
     try {
       // Set registering state immediately to show full context UI
@@ -645,529 +516,156 @@ export default function AuthContainer({
 
       const optionsData = await response.json();
 
-      // Ensure we're still in registering state before proceeding
-      setAuthState("registering");
+      // Extract challengeId and use the rest as options
+      const { challengeId, ...options } = optionsData;
 
-      try {
-        // Start registration - maintain the registering state and UI
-        const authResponse = await startRegistration(optionsData);
+      // Start registration with the correct options structure
+      const authResponse = await startRegistration(options);
 
-        // Keep registering state during verification
-        const verifyResponse = await fetch("/api/auth/register/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            credential: authResponse,
-            challengeId: optionsData.challengeId,
-          }),
-        });
+      // Verify registration
+      const verifyResponse = await fetch("/api/auth/register/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          credential: authResponse,
+          challengeId: challengeId,
+        }),
+      });
 
-        if (!verifyResponse.ok) {
-          const errorData = await verifyResponse.json();
-          throw new Error(
-            errorData.error || "Registration verification failed"
-          );
-        }
+      if (!verifyResponse.ok) {
+        throw new Error("Registration verification failed");
+      }
 
-        const data = await verifyResponse.json();
+      const data = await verifyResponse.json();
 
-        // Only change state after successful verification
-        if (data.user) {
-          const user: AuthenticatedUser = {
-            userId: data.user.id,
-            email: data.user.email,
-            hasPasskey: true,
-            passkeyCount: 1,
-            lastPasskeyAddedAt: Date.now(),
-            deviceTypes: ["platform"],
-          };
-          setAuthenticatedUser(user);
-          onAuthSuccess?.(user);
-          addRecentEmail(email);
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          setAuthState("authenticated");
-        }
-      } catch (error: any) {
-        if (error.name === "NotAllowedError") {
-          handleError(new Error("Registration was cancelled"));
-        } else {
-          handleError(error);
-        }
+      // Store the credential-device association
+      if (data.user) {
+        await storeDeviceCredential(data.user.id, authResponse.id);
+
+        // Continue with existing code...
+        const authUser: AuthenticatedUser = {
+          userId: data.user.id,
+          email: data.user.email,
+          hasPasskey: true,
+          passkeyCount:
+            typeof data.user.passkeyCount === "number"
+              ? data.user.passkeyCount
+              : 1,
+          lastPasskeyAddedAt: Date.now(),
+          deviceTypes: Array.isArray(data.user.deviceTypes)
+            ? [...data.user.deviceTypes, detectDeviceType()]
+            : [detectDeviceType()],
+        };
+
+        setAuthenticatedUser(authUser);
+        onAuthSuccess?.(authUser);
+        addRecentEmail(email);
+        setAuthState("authenticated");
       }
     } catch (error) {
       console.error("Registration failed:", error);
-      handleError(error);
+      handleError();
     }
   };
 
-  // Handle conditional auth success
-  const handleConditionalAuthSuccess = async (credential: any) => {
-    try {
-      const verificationResponse = await fetch(
-        "/api/auth/authenticate/verify",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(credential),
-        }
-      );
+  // Add a new rendering function for different auth flows
+  const renderAuthFlow = () => {
+    switch (authFlow) {
+      case "newDevice":
+        if (!selectedUser) return renderAuthStateContent();
 
-      if (!verificationResponse.ok) {
-        throw new Error("Failed to verify credential");
-      }
-
-      const result = await verificationResponse.json();
-
-      if (result.verified && result.user) {
-        const user: AuthenticatedUser = {
-          userId: result.user.id,
-          email: result.user.email,
-          hasPasskey: true,
-          passkeyCount: result.user.passkeyCount || 1,
-          lastPasskeyAddedAt: result.user.lastPasskeyAddedAt,
-          deviceTypes: result.user.deviceTypes,
-        };
-        setAuthenticatedUser(user);
-        onAuthSuccess?.(user);
-
-        // Add to recent emails if not already present
-        if (result.user.email) {
-          addRecentEmail(result.user.email);
-        }
-      }
-    } catch (error) {
-      handleError(error);
-    }
-  };
-
-  // Handle conditional auth error
-  const handleConditionalAuthError = (error: Error) => {
-    // Only show error if it's not a user dismissal
-    if (error.name !== "NotAllowedError") {
-      handleError(error);
-    }
-  };
-
-  // Handle conditional auth not supported
-  const handleConditionalAuthNotSupported = () => {
-    setAuthState("error");
-    setErrorDetails({
-      code: "CONDITIONAL_AUTH_NOT_SUPPORTED",
-      message: "Conditional authentication not supported",
-      action: "Please try another method",
-    });
-  };
-
-  // Update the handleEmailSelection function to use the ref
-  const handleEmailSelection = useCallback(
-    (selectedEmail: string) => {
-      console.log("Email selected:", selectedEmail);
-
-      // Update state
-      setEmail(selectedEmail);
-      setError(null);
-
-      // Update the input ref directly
-      if (emailInputRef.current) {
-        emailInputRef.current.value = selectedEmail;
-      }
-
-      // Submit the form after a short delay
-      setTimeout(() => {
-        if (formRef.current) {
-          formRef.current.dispatchEvent(
-            new Event("submit", { bubbles: true, cancelable: true })
-          );
-        }
-      }, 50);
-    },
-    [setEmail]
-  );
-
-  const renderAuthStateContent = () => {
-    const baseTransition =
-      "motion-safe:transition-all motion-safe:duration-500 motion-safe:ease-in-out";
-
-    // Remove animations for registering and authentication flows
-    const fadeIn = `${baseTransition} ${
-      isAnimating &&
-      !isNewUserRegistration &&
-      authState !== "registering" &&
-      !(verificationStatus?.exists && verificationStatus.hasPasskeys)
-        ? "opacity-0 scale-95"
-        : "opacity-100 scale-100"
-    }`;
-
-    // Enhanced status messages based on verification status
-    const getStatusMessage = () => {
-      if (isNewUserRegistration) return "Welcome! Setting up your passkey...";
-      if (verificationStatus?.exists) {
-        return verificationStatus.hasPasskeys
-          ? "Welcome back! Preparing your passkey..."
-          : "Welcome back! Please set up your passkey...";
-      }
-      return mode === "signin"
-        ? "Checking your account..."
-        : "Setting up your account...";
-    };
-
-    switch (authState) {
-      case "submitting":
         return (
-          <div className={`text-center space-y-4 py-2 ${fadeIn}`}>
-            <div className="relative inline-flex">
-              <Loader2 className="h-8 w-8 motion-safe:animate-spin text-primary" />
-              <div className="absolute inset-0 motion-safe:animate-ping opacity-50">
-                <Loader2 className="h-8 w-8 text-primary" />
-              </div>
-            </div>
-            <p className="text-sm text-muted-foreground motion-safe:animate-fade-in">
-              {mode === "signin"
-                ? "Initiating sign in process..."
-                : "Setting up your account..."}
-            </p>
-          </div>
+          <NewDeviceRegistration
+            email={selectedUser.email}
+            userId={selectedUser.id}
+            onSuccess={(user) => {
+              const authUser: AuthenticatedUser = {
+                userId: user.id,
+                email: user.email,
+                hasPasskey: true,
+                passkeyCount:
+                  typeof user.passkeyCount === "number" ? user.passkeyCount : 1,
+                lastPasskeyAddedAt: Date.now(),
+                deviceTypes: Array.isArray(user.deviceTypes)
+                  ? [...user.deviceTypes, detectDeviceType()]
+                  : [detectDeviceType()],
+              };
+
+              setAuthenticatedUser(authUser);
+              setAuthState("authenticated");
+              onAuthSuccess?.(authUser);
+
+              // Add to recent emails
+              addRecentEmail(user.email);
+
+              // Reset auth flow
+              setAuthFlow("default");
+              setSelectedUser(null);
+            }}
+            onError={(error) => {
+              setError(error.message);
+              setAuthFlow("passwordFallback");
+            }}
+            onCancel={() => {
+              setAuthFlow("passwordFallback");
+            }}
+          />
         );
 
-      case "checking":
+      case "passwordFallback":
         return (
-          <div className={`text-center space-y-4 py-2 ${fadeIn}`}>
-            <div className="relative inline-flex">
-              <CheckCircle2 className="h-8 w-8 text-primary motion-safe:animate-bounce" />
-            </div>
-            <p className="text-sm text-muted-foreground motion-safe:animate-fade-in">
-              {getStatusMessage()}
-            </p>
-            {verificationStatus?.exists && verificationStatus.hasPasskeys && (
-              <div className="text-xs text-muted-foreground/80 motion-safe:animate-fade-in">
-                <p>Found your passkey - preparing to authenticate...</p>
-                {verificationStatus.passkeyCount > 0 && (
-                  <p className="mt-1">
-                    {verificationStatus.passkeyCount} registered passkey(s)
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        );
-
-      case "error":
-        return (
-          <div className={`space-y-6 py-2 ${fadeIn}`}>
-            <div className="text-center space-y-2">
-              <div className="relative inline-flex">
-                <XCircle className="h-12 w-12 text-destructive motion-safe:animate-shake" />
-              </div>
-              <h3 className="text-lg font-semibold text-destructive motion-safe:transition-colors">
-                {errorDetails?.code === "NETWORK_ERROR"
-                  ? "Connection Error"
-                  : "Authentication Error"}
-              </h3>
-              <p className="text-sm text-destructive/90 motion-safe:animate-fade-in">
-                {errorDetails?.message}
+          <div className="space-y-4">
+            <div className="text-center">
+              <p className="text-muted-foreground">
+                You can continue with password authentication or try another
+                method.
               </p>
-              {errorDetails?.action && (
-                <p className="text-sm text-muted-foreground mt-2 motion-safe:animate-fade-in">
-                  {errorDetails.action}
-                </p>
-              )}
             </div>
 
-            <div className="space-y-3">
-              <Button
-                variant="default"
-                onClick={handleRetry}
-                className="w-full motion-safe:transition-transform motion-safe:hover:scale-[1.02] motion-safe:active:scale-[0.98]"
-              >
-                <RefreshCcw className="h-4 w-4 mr-2 motion-safe:transition-transform motion-safe:group-hover:rotate-180" />
-                Try Again
-              </Button>
-
-              <Button
-                variant="outline"
-                onClick={() => {
-                  handleRetry();
-                  setEmail("");
-                }}
-                className="w-full motion-safe:transition-transform motion-safe:hover:scale-[1.02] motion-safe:active:scale-[0.98]"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2 motion-safe:transition-transform motion-safe:group-hover:-translate-x-1" />
-                Start Over
-              </Button>
-            </div>
-
-            {errorDetails?.code === "NETWORK_ERROR" && (
-              <div className={`bg-muted p-3 rounded-md mt-4 ${fadeIn}`}>
-                <h4 className="text-sm font-medium mb-2">
-                  Troubleshooting steps:
-                </h4>
-                <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                  <li className="motion-safe:animate-fade-in-up [animation-delay:100ms]">
-                    Check your internet connection
-                  </li>
-                  <li className="motion-safe:animate-fade-in-up [animation-delay:200ms]">
-                    Ensure you're not using a VPN that might block access
-                  </li>
-                  <li className="motion-safe:animate-fade-in-up [animation-delay:300ms]">
-                    Clear your browser cache and try again
-                  </li>
-                  <li className="motion-safe:animate-fade-in-up [animation-delay:400ms]">
-                    If problems persist, contact support
-                  </li>
-                </ul>
-              </div>
-            )}
-          </div>
-        );
-
-      case "success":
-        // Skip rendering success state for new user registration
-        if (isNewUserRegistration) {
-          return renderAuthStateContent(); // Re-render current state without transition
-        }
-        return (
-          <div className={`text-center space-y-4 py-2 ${fadeIn}`}>
-            <div className="relative inline-flex">
-              <CheckCircle2 className="h-12 w-12 text-green-500 motion-safe:animate-bounce" />
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-lg font-semibold text-green-700 motion-safe:animate-fade-in">
-                {verificationStatus?.exists
-                  ? verificationStatus.hasPasskeys
-                    ? "Welcome back!"
-                    : "Set up your passkey"
-                  : "Welcome! Let's secure your account"}
-              </h3>
-              <p className="text-sm text-muted-foreground motion-safe:animate-fade-in">
-                {email}
-              </p>
-              {verificationStatus && (
-                <div className="space-y-1 text-xs text-muted-foreground/80 motion-safe:animate-fade-in">
-                  {verificationStatus.exists ? (
-                    verificationStatus.hasPasskeys ? (
-                      <>
-                        <p>
-                          Last used:{" "}
-                          {new Date(
-                            verificationStatus.lastPasskeyAddedAt || 0
-                          ).toLocaleDateString()}
-                        </p>
-                        <p>
-                          {verificationStatus.passkeyCount}{" "}
-                          {verificationStatus.passkeyCount === 1
-                            ? "passkey"
-                            : "passkeys"}{" "}
-                          registered
-                        </p>
-                        {!authenticationState && (
-                          <Button
-                            variant="default"
-                            className="mt-4 w-full motion-safe:transition-all motion-safe:duration-200 motion-safe:hover:scale-[1.02] motion-safe:active:scale-[0.98]"
-                            onClick={() => initiateAuthentication(email)}
-                            disabled={!browserSupportsWebAuthn()}
-                          >
-                            {browserSupportsWebAuthn()
-                              ? "Sign in with Passkey"
-                              : "Passkeys not supported"}
-                          </Button>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        <p>Enhance your security with a passkey</p>
-                        <Button
-                          variant="default"
-                          className="mt-4 w-full motion-safe:transition-all motion-safe:duration-200 motion-safe:hover:scale-[1.02] motion-safe:active:scale-[0.98]"
-                          onClick={() => initiateRegistration(email)}
-                          disabled={!browserSupportsWebAuthn()}
-                        >
-                          Create Passkey
-                        </Button>
-                      </>
-                    )
-                  ) : null}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-
-      case "authenticated":
-        return (
-          <div className={`text-center space-y-4 py-2 ${fadeIn}`}>
-            <div className="relative inline-flex">
-              <CheckCircle2 className="h-12 w-12 text-green-500 motion-safe:animate-bounce" />
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-lg font-semibold text-green-700 motion-safe:animate-fade-in">
-                You did it!
-              </h3>
-              <p className="text-sm text-muted-foreground motion-safe:animate-fade-in">
-                Successfully authenticated with passkey
-              </p>
-              {authenticatedUser && (
-                <div className="text-xs text-muted-foreground/80 mt-2 motion-safe:animate-fade-in">
-                  <p>Signed in as {authenticatedUser.email}</p>
-                  <p className="mt-1">
-                    {authenticatedUser.passkeyCount}{" "}
-                    {authenticatedUser.passkeyCount === 1
-                      ? "passkey"
-                      : "passkeys"}{" "}
-                    available
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        );
-
-      case "registering":
-        return (
-          <div className="text-center space-y-6 py-2 relative">
-            {/* Add relative positioning to ensure content stays above modal overlay */}
-            <div className="relative z-10">
-              <div className="relative inline-flex">
-                <Loader2 className="h-12 w-12 text-primary motion-safe:animate-spin" />
-                <div className="absolute inset-0 motion-safe:animate-ping opacity-50">
-                  <Loader2 className="h-12 w-12 text-primary" />
-                </div>
-              </div>
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-primary">
-                  Setting Up Your Passkey
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  Follow your browser's prompts to create your passkey
-                </p>
-
-                <div className="space-y-3 text-sm text-muted-foreground/80 bg-muted/50 rounded-lg p-4">
-                  <h4 className="font-medium text-primary/90">
-                    What to expect:
-                  </h4>
-                  <ul className="space-y-2 text-left list-none">
-                    <li className="flex items-center">
-                      <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center mr-2">
-                        1
-                      </div>
-                      Your browser will ask for biometric verification
-                      (fingerprint, face, etc.)
-                    </li>
-                    <li className="flex items-center">
-                      <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center mr-2">
-                        2
-                      </div>
-                      You may need to set up a PIN if not already configured
-                    </li>
-                    <li className="flex items-center">
-                      <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center mr-2">
-                        3
-                      </div>
-                      Your device will securely store the passkey
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="text-xs text-muted-foreground/70 bg-muted/30 rounded-lg p-3">
-                  <p className="font-medium mb-2">💡 Pro Tips:</p>
-                  <ul className="space-y-1 text-left list-disc list-inside">
-                    <li>Make sure your device's biometric sensors are clean</li>
-                    <li>Keep your security key nearby if you're using one</li>
-                    <li>Don't refresh or close this page during setup</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                // Reset to default flow
+                setAuthFlow("default");
+                setSelectedUser(null);
+                setAuthState("initial");
+              }}
+            >
+              Back to Sign In
+            </Button>
           </div>
         );
 
       default:
-        return (
-          <div className={fadeIn}>
-            <div className="space-y-4">
-              <RecentEmails onSelect={handleEmailSelection} />
-              <div className="space-y-2">
-                <Label
-                  htmlFor="auth-email"
-                  className={`motion-safe:transition-colors motion-safe:duration-200 ${
-                    isSubmitting ? "text-muted-foreground" : ""
-                  }`}
-                >
-                  Email address
-                </Label>
-                <div className="relative">
-                  <Input
-                    type="email"
-                    id="auth-email"
-                    name="email"
-                    placeholder="Enter your email"
-                    value={email}
-                    onChange={handleEmailChange}
-                    onBlur={() => {
-                      if (email.trim()) {
-                        validateEmail(email);
-                      }
-                    }}
-                    ref={emailInputRef}
-                    required
-                    autoComplete="username webauthn"
-                    data-webauthn="conditional"
-                    data-form-type="other"
-                    className={`${getInputStatusClasses()} 
-                      motion-safe:transition-all motion-safe:duration-200
-                      ${isSubmitting ? "bg-muted text-muted-foreground" : ""}
-                      motion-safe:focus:scale-[1.01]`}
-                    aria-describedby={
-                      error ? "auth-error" : "email-description"
-                    }
-                    aria-invalid={error ? "true" : "false"}
-                    disabled={isSubmitting}
-                  />
-                  {isSubmitting && (
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 motion-safe:transition-opacity">
-                      <Loader2 className="h-4 w-4 motion-safe:animate-spin text-muted-foreground" />
-                    </div>
-                  )}
-                </div>
-                <div className="min-h-[20px] motion-safe:transition-all motion-safe:duration-200">
-                  {error ? (
-                    <p
-                      id="auth-error"
-                      className="text-sm text-destructive motion-safe:animate-fade-in"
-                    >
-                      {error}
-                    </p>
-                  ) : (
-                    <p
-                      id="email-description"
-                      className={`text-sm text-muted-foreground motion-safe:transition-opacity motion-safe:duration-200 ${
-                        isSubmitting ? "opacity-50" : ""
-                      }`}
-                    >
-                      Enter your email to continue
-                    </p>
-                  )}
-                </div>
-              </div>
-              <Button
-                type="submit"
-                className="w-full motion-safe:transition-all motion-safe:duration-200 motion-safe:hover:scale-[1.02] motion-safe:active:scale-[0.98]"
-                disabled={isSubmitting || !email.trim()}
-              >
-                {isSubmitting ? (
-                  <span className="flex items-center justify-center gap-2 motion-safe:animate-fade-in">
-                    <Loader2 className="h-4 w-4 motion-safe:animate-spin" />
-                    Processing...
-                  </span>
-                ) : (
-                  "Continue"
-                )}
-              </Button>
-            </div>
-          </div>
-        );
+        return renderAuthStateContent();
     }
+  };
+
+  // Helper functions for title and description
+  const renderAuthTitle = () => {
+    if (authFlow === "newDevice") return "New Device Detected";
+    if (authFlow === "passwordFallback") return "Alternative Sign In";
+
+    if (authState === "authenticated") return "Welcome";
+    if (authState === "registering") return "Create Account";
+
+    return mode === "signin" ? "Welcome back" : "Create an account";
+  };
+
+  const renderAuthDescription = () => {
+    if (authFlow === "newDevice")
+      return "Set up this device for faster sign-in";
+    if (authFlow === "passwordFallback") return "Choose another way to sign in";
+
+    if (authState === "authenticated")
+      return `Signed in as ${authenticatedUser?.email}`;
+    if (authState === "registering")
+      return "Set up your passkey for secure access";
+
+    return mode === "signin"
+      ? "Sign in to your account"
+      : "Create a new account with a passkey";
   };
 
   return (
@@ -1175,28 +673,36 @@ export default function AuthContainer({
       <CardHeader className="space-y-1">
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-semibold tracking-tight">
-            {mode === "signin" ? "Welcome back" : "Create an account"}
+            {renderAuthTitle()}
           </h2>
-          <PasskeyIndicator />
+          <PasskeyIndicator hasDeviceCredentials={deviceRecognized} />
         </div>
+        <p className="text-sm text-muted-foreground">
+          {renderAuthDescription()}
+        </p>
       </CardHeader>
-      <form onSubmit={handleSubmit} noValidate ref={formRef}>
-        <CardContent className="space-y-4 motion-safe:transition-all motion-safe:duration-300">
-          {renderAuthStateContent()}
-        </CardContent>
-      </form>
-      <CardFooter className="flex justify-center">
-        <Button
-          variant="ghost"
-          onClick={handleModeChange}
-          className="text-sm motion-safe:transition-all motion-safe:duration-200 motion-safe:hover:scale-[1.02] motion-safe:active:scale-[0.98]"
-          disabled={authState !== "initial"}
-        >
-          {mode === "signin"
-            ? "New here? Create an account"
-            : "Already have an account? Sign In"}
-        </Button>
-      </CardFooter>
+      <CardContent className="space-y-4">
+        {error && (
+          <div className="bg-destructive/15 text-destructive text-sm p-3 rounded-md">
+            {error}
+          </div>
+        )}
+        {renderAuthFlow()}
+      </CardContent>
+      {authFlow === "default" && authState === "initial" && (
+        <CardFooter className="flex justify-center">
+          <Button
+            variant="ghost"
+            onClick={handleModeChange}
+            className="text-sm"
+            disabled={authState !== "initial"}
+          >
+            {mode === "signin"
+              ? "New here? Create an account"
+              : "Already have an account? Sign In"}
+          </Button>
+        </CardFooter>
+      )}
     </Card>
   );
 }

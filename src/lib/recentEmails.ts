@@ -1,3 +1,6 @@
+import { isDeviceRecognizedForUser } from "./db/device-credentials";
+import { getUserByEmail } from "./db/users";
+
 const STORAGE_KEY = "recent_emails";
 const DEBUG_LOG_KEY = "recent_emails_debug_log";
 const MAX_EMAILS = 3;
@@ -11,14 +14,27 @@ interface RecentEmail {
   avatarUrl?: string;
 }
 
+// Define a type for debug log entries
+export interface DebugLogEntry {
+  timestamp: string;
+  action: string;
+  data?: unknown;
+  stored?: string | null;
+}
+
+// Define a type for errors
+type ErrorWithMessage = {
+  message: string;
+};
+
 // Debug logging function that persists across refreshes
-const debugLog = (action: string, data?: any) => {
+const debugLog = (action: string, data?: unknown) => {
   if (typeof window === "undefined") return;
 
   try {
     const now = new Date();
     const timestamp = now.toISOString();
-    const logEntry = {
+    const logEntry: DebugLogEntry = {
       timestamp,
       action,
       data,
@@ -28,7 +44,7 @@ const debugLog = (action: string, data?: any) => {
     // Get existing logs
     const existingLogs = JSON.parse(
       localStorage.getItem(DEBUG_LOG_KEY) || "[]"
-    );
+    ) as DebugLogEntry[];
 
     // Add new log and keep only last 20 entries
     const newLogs = [logEntry, ...existingLogs].slice(0, 20);
@@ -41,10 +57,12 @@ const debugLog = (action: string, data?: any) => {
 };
 
 // Function to view debug logs
-export const getDebugLogs = () => {
+export const getDebugLogs = (): DebugLogEntry[] => {
   if (typeof window === "undefined") return [];
   try {
-    return JSON.parse(localStorage.getItem(DEBUG_LOG_KEY) || "[]");
+    return JSON.parse(
+      localStorage.getItem(DEBUG_LOG_KEY) || "[]"
+    ) as DebugLogEntry[];
   } catch (error) {
     console.error("Failed to retrieve debug logs:", error);
     return [];
@@ -65,13 +83,16 @@ export const getRecentEmails = (): RecentEmail[] => {
     const sorted = emails.sort((a, b) => b.lastUsed - a.lastUsed);
     debugLog("GET_EMAILS", { emails: sorted });
     return sorted;
-  } catch (error: any) {
-    debugLog("GET_EMAILS_ERROR", { error: error?.message || "Unknown error" });
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    debugLog("GET_EMAILS_ERROR", { error: errorMessage });
     // Try to recover by clearing storage
     try {
       localStorage.removeItem(STORAGE_KEY);
-    } catch (e: any) {
-      debugLog("CLEAR_STORAGE_ERROR", { error: e?.message || "Unknown error" });
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : "Unknown error";
+      debugLog("CLEAR_STORAGE_ERROR", { error: errMsg });
     }
     return [];
   }
@@ -101,16 +122,19 @@ export const addRecentEmail = (email: string): void => {
     // Dispatch custom event to notify components
     window.dispatchEvent(new CustomEvent(EMAILS_UPDATED_EVENT));
     debugLog("ADD_EMAIL_COMPLETE", { email, totalEmails: newEmails.length });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     debugLog("ADD_EMAIL_ERROR", {
-      error: error?.message || "Unknown error",
+      error: errorMessage,
       email,
     });
     // Try to recover by clearing storage
     try {
       localStorage.removeItem(STORAGE_KEY);
-    } catch (e: any) {
-      debugLog("CLEAR_STORAGE_ERROR", { error: e?.message || "Unknown error" });
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : "Unknown error";
+      debugLog("CLEAR_STORAGE_ERROR", { error: errMsg });
     }
   }
 };
@@ -132,16 +156,19 @@ export const removeRecentEmail = (email: string): void => {
       email,
       remainingEmails: filtered.length,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     debugLog("REMOVE_EMAIL_ERROR", {
-      error: error?.message || "Unknown error",
+      error: errorMessage,
       email,
     });
     // Try to recover by clearing storage
     try {
       localStorage.removeItem(STORAGE_KEY);
-    } catch (e: any) {
-      debugLog("CLEAR_STORAGE_ERROR", { error: e?.message || "Unknown error" });
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : "Unknown error";
+      debugLog("CLEAR_STORAGE_ERROR", { error: errMsg });
     }
   }
 };
@@ -156,12 +183,41 @@ export const clearRecentEmails = (): void => {
     // Dispatch custom event to notify components
     window.dispatchEvent(new CustomEvent(EMAILS_UPDATED_EVENT));
     debugLog("CLEAR_EMAILS_COMPLETE");
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
     debugLog("CLEAR_EMAILS_ERROR", {
-      error: error?.message || "Unknown error",
+      error: errorMessage,
     });
   }
 };
 
 // Export the event name for components to listen to
 export const RECENT_EMAILS_UPDATED = EMAILS_UPDATED_EVENT;
+
+// Add a function to check if an email has passkeys on this device
+export async function checkEmailsWithPasskeysOnDevice(
+  emails: string[]
+): Promise<Record<string, boolean>> {
+  const results: Record<string, boolean> = {};
+
+  await Promise.all(
+    emails.map(async (email) => {
+      try {
+        const user = await getUserByEmail(email);
+        if (!user) {
+          results[email] = false;
+          return;
+        }
+
+        const hasPasskeys = await isDeviceRecognizedForUser(user.id);
+        results[email] = hasPasskeys;
+      } catch (error) {
+        console.error(`Error checking passkeys for ${email}:`, error);
+        results[email] = false;
+      }
+    })
+  );
+
+  return results;
+}

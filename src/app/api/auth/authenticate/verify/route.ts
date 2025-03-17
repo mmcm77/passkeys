@@ -9,6 +9,7 @@ import {
 import { verifyChallenge, removeChallenge } from "@/lib/auth/challenge-manager";
 import { createSession } from "@/lib/auth/session";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
+import { updateDeviceCredentialUsage } from "@/lib/db/device-credentials";
 
 export async function POST(request: NextRequest) {
   try {
@@ -151,6 +152,12 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      // Update the device credential usage timestamp
+      await updateDeviceCredentialUsage(
+        user.id,
+        matchingCredential.credentialId
+      );
+
       // Create session
       const session = await createSession(user.id);
 
@@ -161,6 +168,7 @@ export async function POST(request: NextRequest) {
           id: user.id,
           email: user.email,
           displayName: user.displayName,
+          credentialId: matchingCredential.credentialId,
         },
       });
 
@@ -168,6 +176,17 @@ export async function POST(request: NextRequest) {
         name: "session",
         value: session.id,
         httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 60 * 60 * 24 * 7, // 1 week
+      });
+
+      // Set a cookie to indicate active passkey usage
+      response.cookies.set({
+        name: "activePasskey",
+        value: "true",
+        httpOnly: false, // Allow JS access for UI indicators
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
         path: "/",

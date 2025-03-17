@@ -4,6 +4,174 @@ import {
 } from "@simplewebauthn/browser";
 
 /**
+ * Utils for detecting browser capabilities for WebAuthn
+ */
+
+export interface BrowserInfo {
+  browser: string;
+  version: string;
+  os: string;
+  mobile: boolean;
+  isWebAuthnSupported: boolean;
+  isSecureContext: boolean;
+}
+
+/**
+ * Gets detailed browser information
+ */
+export function getBrowserInfo(): BrowserInfo {
+  let browser = "Unknown";
+  let version = "Unknown";
+  let os = "Unknown";
+  let mobile = false;
+  let isWebAuthnSupported = false;
+  let isSecureContext = false;
+
+  if (typeof window === "undefined") {
+    return {
+      browser,
+      version,
+      os,
+      mobile,
+      isWebAuthnSupported,
+      isSecureContext,
+    };
+  }
+
+  // Platform detection
+  const ua = navigator.userAgent;
+  isWebAuthnSupported = typeof window.PublicKeyCredential !== "undefined";
+  isSecureContext = window.isSecureContext;
+
+  // OS detection
+  if (/Windows/.test(ua)) {
+    os = "Windows";
+  } else if (/Macintosh/.test(ua)) {
+    os = "macOS";
+  } else if (/iPhone|iPad|iPod/.test(ua)) {
+    os = "iOS";
+    mobile = true;
+  } else if (/Android/.test(ua)) {
+    os = "Android";
+    mobile = true;
+  } else if (/Linux/.test(ua)) {
+    os = "Linux";
+  }
+
+  // Browser detection
+  if (/Safari/.test(ua) && !/Chrome/.test(ua)) {
+    browser = "Safari";
+    const match = ua.match(/Version\/(\d+\.\d+)/);
+    version = match?.[1] || "Unknown";
+  } else if (/Firefox/.test(ua)) {
+    browser = "Firefox";
+    const match = ua.match(/Firefox\/(\d+\.\d+)/);
+    version = match?.[1] || "Unknown";
+  } else if (/Chrome/.test(ua) && !/Edg/.test(ua)) {
+    browser = "Chrome";
+    const match = ua.match(/Chrome\/(\d+\.\d+)/);
+    version = match?.[1] || "Unknown";
+  } else if (/Edg/.test(ua)) {
+    browser = "Edge";
+    const match = ua.match(/Edg\/(\d+\.\d+)/);
+    version = match?.[1] || "Unknown";
+  }
+
+  console.log(`Device detection - UserAgent: "${ua}"`);
+  console.log(`Device detection - Platform: "${navigator.platform}"`);
+
+  return {
+    browser,
+    version,
+    os,
+    mobile,
+    isWebAuthnSupported,
+    isSecureContext,
+  };
+}
+
+/**
+ * Detects the current device type based on user agent
+ */
+export function detectDeviceType(): "mobile" | "tablet" | "desktop" {
+  if (typeof window === "undefined") {
+    return "desktop";
+  }
+
+  const ua = navigator.userAgent;
+
+  // Check if mobile
+  if (
+    /iPhone|Android.*Mobile|Mobile.*Android|Mobile Safari|Opera Mobi|Opera Mini|BlackBerry/.test(
+      ua
+    )
+  ) {
+    return "mobile";
+  }
+
+  // Check if tablet
+  if (/iPad|Android(?!.*Mobile)|Tablet|PlayBook/.test(ua)) {
+    return "tablet";
+  }
+
+  // Default to desktop
+  return "desktop";
+}
+
+/**
+ * Gets basic WebAuthn capabilities for the current browser
+ * A synchronous version that doesn't perform any async checks
+ */
+export function getBasicWebAuthnCapabilities() {
+  const browserInfo = getBrowserInfo();
+  const isAvailable =
+    typeof window !== "undefined" && "PublicKeyCredential" in window;
+
+  // Check for conditional UI (autofill)
+  const hasConditionalMediation =
+    isAvailable &&
+    typeof window !== "undefined" &&
+    "PublicKeyCredential" in window &&
+    "conditional" in (window.PublicKeyCredential as any) &&
+    "mediation" in (window.PublicKeyCredential as any).conditional;
+
+  // Check for platform authenticator
+  const hasPlatformAuthenticator =
+    isAvailable &&
+    typeof window !== "undefined" &&
+    "PublicKeyCredential" in window &&
+    "isUserVerifyingPlatformAuthenticatorAvailable" in
+      window.PublicKeyCredential;
+
+  // Determine recommended action based on capabilities
+  let recommendedAction;
+
+  // Safari on iOS and macOS handles passkeys best
+  if (
+    browserInfo.browser === "Safari" &&
+    (browserInfo.os === "macOS" || browserInfo.os === "iOS")
+  ) {
+    recommendedAction = "Use native passkey flow";
+  }
+  // Chrome has good passkey support
+  else if (browserInfo.browser === "Chrome") {
+    recommendedAction = "Use standard WebAuthn with platform authenticator";
+  }
+  // Firefox has limited support
+  else if (browserInfo.browser === "Firefox") {
+    recommendedAction = "Consider security key as fallback";
+  }
+
+  return {
+    isAvailable,
+    hasConditionalMediation,
+    hasPlatformAuthenticator,
+    browserInfo,
+    recommendedAction,
+  };
+}
+
+/**
  * Checks if the browser supports conditional UI/mediation for WebAuthn
  * This is used for auto-filling passkeys without user interaction
  */
@@ -30,58 +198,14 @@ export async function supportsConditionalMediation(): Promise<boolean> {
  */
 export async function hasPlatformAuthenticator(): Promise<boolean> {
   try {
-    return await platformAuthenticatorIsAvailable();
-  } catch {
+    console.log("Checking platform authenticator availability...");
+    const result = await platformAuthenticatorIsAvailable();
+    console.log("Platform authenticator available:", result);
+    return result;
+  } catch (error) {
+    console.error("Error checking platform authenticator:", error);
     return false;
   }
-}
-
-/**
- * Detects the current browser and its WebAuthn implementation details
- */
-export function getBrowserInfo(): {
-  browser: string;
-  version: string;
-  isWebAuthnSupported: boolean;
-  isMobile: boolean;
-  isSecureContext: boolean;
-} {
-  if (typeof window === "undefined") {
-    return {
-      browser: "unknown",
-      version: "unknown",
-      isWebAuthnSupported: false,
-      isMobile: false,
-      isSecureContext: false,
-    };
-  }
-
-  const ua = window.navigator.userAgent;
-  let browser = "unknown";
-  let version = "unknown";
-
-  // Detect browser and version
-  if (ua.includes("Chrome/")) {
-    browser = "Chrome";
-    version = ua.match(/Chrome\/(\d+)/)?.[1] || "unknown";
-  } else if (ua.includes("Firefox/")) {
-    browser = "Firefox";
-    version = ua.match(/Firefox\/(\d+)/)?.[1] || "unknown";
-  } else if (ua.includes("Safari/") && !ua.includes("Chrome/")) {
-    browser = "Safari";
-    version = ua.match(/Version\/(\d+)/)?.[1] || "unknown";
-  } else if (ua.includes("Edg/")) {
-    browser = "Edge";
-    version = ua.match(/Edg\/(\d+)/)?.[1] || "unknown";
-  }
-
-  return {
-    browser,
-    version,
-    isWebAuthnSupported: browserSupportsWebAuthn(),
-    isMobile: /iPhone|iPad|iPod|Android/i.test(ua),
-    isSecureContext: window.isSecureContext,
-  };
 }
 
 /**

@@ -18,6 +18,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   db: {
     schema: "public",
   },
+  // Add global headers for REST API requests to address 406 errors
+  global: {
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+  },
 });
 
 // Test function to verify Supabase connection

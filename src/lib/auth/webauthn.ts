@@ -105,11 +105,19 @@ export async function verifyWebAuthnAuthentication(
 
       // Log the key details for debugging
       console.log("Decoded public key length:", publicKey.length);
-      console.log("First byte value:", publicKey[0].toString(16));
 
-      // Verify the key starts with the expected COSE_Key header (0xA5)
-      if (publicKey[0] !== 0xa5) {
-        throw new Error("Invalid public key format: Expected COSE key type");
+      // Check if the public key has at least one byte
+      if (publicKey.length > 0) {
+        // Use non-null assertion for type safety since we've verified length is > 0
+        const firstByte = publicKey[0]!;
+        console.log("First byte value:", firstByte.toString(16));
+
+        // Verify the key starts with the expected COSE_Key header (0xA5)
+        if (firstByte !== 0xa5) {
+          throw new Error("Invalid public key format: Expected COSE key type");
+        }
+      } else {
+        throw new Error("Invalid public key: Empty buffer");
       }
     } catch (error) {
       console.error("Error decoding public key:", error);
@@ -121,7 +129,16 @@ export async function verifyWebAuthnAuthentication(
     // Log the final values
     console.log("Final credentialId:", credentialId);
     console.log("Final publicKey length:", publicKey.length);
-    console.log("First byte (hex):", publicKey[0].toString(16));
+
+    // Check if publicKey has bytes before accessing them
+    if (publicKey.length > 0) {
+      // We can safely use non-null assertion since we've verified length > 0
+      const firstByte = publicKey[0]!;
+      console.log("First byte (hex):", firstByte.toString(16));
+    } else {
+      console.warn("Public key buffer is empty");
+    }
+
     console.log("======================================");
 
     return verifyAuthenticationResponse({

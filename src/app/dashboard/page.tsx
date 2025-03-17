@@ -26,7 +26,7 @@ export default function DashboardPage() {
           <CardHeader>
             <h2 className="text-lg font-medium">Welcome to your Dashboard</h2>
             <CardDescription>
-              You've successfully authenticated with a passkey. This is a
+              You&apos;ve successfully authenticated with a passkey. This is a
               secure, passwordless authentication method that uses public key
               cryptography.
             </CardDescription>
@@ -36,9 +36,9 @@ export default function DashboardPage() {
               <div>
                 <h3 className="text-sm font-medium mb-2">Your Passkeys</h3>
                 <p className="text-sm text-muted-foreground mb-4">
-                  These are the passkeys you've registered for this account.
-                  Each passkey is securely stored on your device and never
-                  shared with the server.
+                  These are the passkeys you&apos;ve registered for this
+                  account. Each passkey is securely stored on your device and
+                  never shared with the server.
                 </p>
                 <Separator className="my-4" />
                 <PasskeyList />

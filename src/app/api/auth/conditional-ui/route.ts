@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       options: enhancedOptions.optionsJSON,
       challengeId,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Conditional UI authentication error:", error);
     return Response.json(
       { error: "Failed to generate authentication options" },

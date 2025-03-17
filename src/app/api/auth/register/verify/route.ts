@@ -4,6 +4,11 @@ import { getUserById } from "@/lib/db/users";
 import { storeCredential } from "@/lib/db/credentials";
 import { verifyChallenge, removeChallenge } from "@/lib/auth/challenge-manager";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
+import {
+  storeDeviceCredential,
+  getDeviceCredential,
+} from "@/lib/db/device-credentials";
+import { getBrowserInfo, detectDeviceType } from "@/lib/auth/browser-detection";
 
 // Helper function to get device info from request
 function getDeviceInfo(request: NextRequest) {
@@ -38,7 +43,7 @@ function getDeviceInfo(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { credential, challengeId } = await request.json();
+    const { credential, challengeId, browserInfo } = await request.json();
 
     // Verify challenge
     const challengeResult = await verifyChallenge(challengeId, "registration");
@@ -105,15 +110,22 @@ export async function POST(request: NextRequest) {
     console.log("=== REGISTRATION DATA ===");
     console.log("Credential ID:", verifiedCredential.id);
     console.log("Public Key Type:", typeof verifiedCredential.publicKey);
-    console.log(
-      "Public Key is Buffer:",
-      Buffer.isBuffer(verifiedCredential.publicKey)
-    );
+    console.log("Is buffer?", Buffer.isBuffer(verifiedCredential.publicKey));
     console.log("Public Key Length:", verifiedCredential.publicKey.length);
-    console.log(
-      "First byte value:",
-      verifiedCredential.publicKey[0].toString(16)
-    );
+
+    // Check if publicKey exists and has at least one element
+    if (
+      verifiedCredential.publicKey &&
+      verifiedCredential.publicKey.length > 0
+    ) {
+      // We can safely use non-null assertion since we've verified length > 0
+      const firstByte = verifiedCredential.publicKey[0]!;
+      console.log("First byte value:", firstByte.toString(16));
+    } else {
+      console.warn(
+        "Public key is empty or doesn't have the expected structure"
+      );
+    }
 
     // Convert the public key to base64url format for storage
     const publicKeyBase64 = isoBase64URL.fromBuffer(
@@ -122,7 +134,18 @@ export async function POST(request: NextRequest) {
     console.log("Public Key (base64url):", publicKeyBase64);
     console.log("========================");
 
-    // Store credential with base64url encoded public key
+    // First, check if this credential is already registered as a device credential
+    // to avoid duplicate registrations
+    const existingDeviceCredential = await getDeviceCredential(
+      userId,
+      verifiedCredential.id
+    );
+
+    // Determine which registration approach to use
+    const registrationType = existingDeviceCredential ? "update" : "create";
+    console.log(`Registration type: ${registrationType}`);
+
+    // For WebAuthn to work properly, we need to always store the credential with the public key
     await storeCredential({
       userId: user.id,
       credentialId: verifiedCredential.id,
@@ -138,6 +161,68 @@ export async function POST(request: NextRequest) {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
     });
+
+    // Store or update device credential for device recognition
+    try {
+      console.log("Storing device credential for device recognition");
+
+      // Use provided browserInfo or detect from request
+      const detectedBrowserInfo = browserInfo || getBrowserInfo();
+
+      // Make sure we have browser and OS information
+      let browser = detectedBrowserInfo?.browser;
+      let os = detectedBrowserInfo?.os;
+      const deviceType = detectedBrowserInfo?.deviceType || detectDeviceType();
+
+      // If browser detection failed, try to detect from user agent
+      if (!browser || browser === "Unknown") {
+        const userAgent = request.headers.get("user-agent") || "";
+        console.log(`Detecting browser from user agent: ${userAgent}`);
+
+        // Attempt to detect browser
+        if (userAgent.includes("Chrome")) {
+          browser = "Chrome";
+        } else if (userAgent.includes("Safari")) {
+          browser = "Safari";
+        } else if (userAgent.includes("Firefox")) {
+          browser = "Firefox";
+        } else if (userAgent.includes("Edge")) {
+          browser = "Edge";
+        }
+
+        // Attempt to detect OS
+        if (userAgent.includes("Windows")) {
+          os = "Windows";
+        } else if (userAgent.includes("Mac")) {
+          os = "macOS";
+        } else if (userAgent.includes("iPhone") || userAgent.includes("iPad")) {
+          os = "iOS";
+        } else if (userAgent.includes("Android")) {
+          os = "Android";
+        } else if (userAgent.includes("Linux")) {
+          os = "Linux";
+        }
+      }
+
+      // Ensure we have some values
+      browser = browser || "Unknown Browser";
+      os = os || "Unknown OS";
+
+      // Generate a readable device name based on OS and browser
+      const deviceName = `${os} ${browser}`;
+
+      console.log(`Detected device: ${deviceName} (${deviceType})`);
+
+      // Store device credential (update will happen automatically if it exists)
+      await storeDeviceCredential(user.id, verifiedCredential.id, deviceName);
+
+      console.log(
+        `Device credential ${registrationType}d successfully: ${deviceName}`
+      );
+    } catch (deviceError) {
+      // Log but don't fail the registration if device credential storage fails
+      console.error("Error storing device credential:", deviceError);
+    }
 
     return NextResponse.json({
       registered: true,

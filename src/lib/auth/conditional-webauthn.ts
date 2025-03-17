@@ -10,13 +10,16 @@ import {
   supportsConditionalMediation,
 } from "./browser-detection";
 
+// Add proper type imports for authenticator properties
 type ResidentKeyRequirement = "discouraged" | "preferred" | "required";
+type AuthenticatorAttachment = "platform" | "cross-platform";
+type UserVerificationRequirement = "required" | "preferred" | "discouraged";
 
 interface ConditionalAuthOptions {
   mediation?: "conditional" | "optional" | "required" | "silent";
   timeout?: number;
-  userVerification?: "required" | "preferred" | "discouraged";
-  authenticatorAttachment?: "platform" | "cross-platform";
+  userVerification?: UserVerificationRequirement;
+  authenticatorAttachment?: AuthenticatorAttachment;
 }
 
 /**
@@ -167,13 +170,80 @@ export async function attemptConditionalRegistration(
   options: PublicKeyCredentialCreationOptionsJSON,
   authOptions: ConditionalAuthOptions = {}
 ): Promise<any> {
+  const browserInfo = getBrowserInfo();
+  console.log(
+    `Attempting registration with browser: ${browserInfo.browser} ${browserInfo.version}`
+  );
+
   try {
     const enhancedOptions = await prepareConditionalRegistration(
       options,
       authOptions
     );
-    return await startRegistration(enhancedOptions);
+
+    // For Safari, we need special handling
+    if (browserInfo.browser === "Safari") {
+      console.log("Using Safari-specific registration flow");
+      try {
+        // Ensure the options are properly structured for Safari
+        const safariOptions = {
+          ...enhancedOptions,
+          // Ensure these Safari-specific settings are set
+          optionsJSON: {
+            ...enhancedOptions.optionsJSON,
+            authenticatorSelection: {
+              ...enhancedOptions.optionsJSON.authenticatorSelection,
+              userVerification: "preferred" as UserVerificationRequirement,
+              residentKey: "required" as ResidentKeyRequirement,
+              requireResidentKey: true,
+            },
+            timeout: Math.min(authOptions.timeout || 60000, 120000), // Ensure timeout is reasonable
+          },
+        };
+
+        console.log(
+          "Safari registration options:",
+          JSON.stringify(safariOptions, null, 2)
+        );
+
+        // Start registration with the Safari-specific options
+        const regResult = await startRegistration(safariOptions);
+
+        // Safari sometimes returns data in different formats, normalize it
+        return sanitizeCredentialResponse(regResult);
+      } catch (safariError) {
+        console.error("Safari-specific registration error:", safariError);
+
+        // Try a simpler approach as fallback for Safari
+        const fallbackOptions = {
+          optionsJSON: {
+            ...options,
+            authenticatorSelection: {
+              authenticatorAttachment: "platform" as AuthenticatorAttachment,
+              requireResidentKey: true,
+              residentKey: "required" as ResidentKeyRequirement,
+              userVerification: "preferred" as UserVerificationRequirement,
+            },
+            timeout: 60000,
+          },
+          useAutoRegister: false,
+        };
+
+        console.log(
+          "Trying Safari fallback options:",
+          JSON.stringify(fallbackOptions, null, 2)
+        );
+        return sanitizeCredentialResponse(
+          await startRegistration(fallbackOptions)
+        );
+      }
+    } else {
+      // For other browsers, use the normal flow
+      return await startRegistration(enhancedOptions);
+    }
   } catch (error: any) {
+    console.error("Registration error details:", error);
+
     // Handle specific error cases
     if (
       error.name === "NotAllowedError" &&
@@ -181,23 +251,86 @@ export async function attemptConditionalRegistration(
     ) {
       throw new Error("Another registration operation is in progress");
     }
-    if (error.name === "NotSupportedError") {
+
+    if (
+      error.name === "NotSupportedError" ||
+      (error.message && error.message.includes("base64URLString.replace"))
+    ) {
+      console.log(
+        "Using fallback registration approach due to:",
+        error.message
+      );
+
       // Fall back to regular registration with non-resident key
       const fallbackOptions = {
-        ...options,
-        authenticatorSelection: {
-          ...options.authenticatorSelection,
-          requireResidentKey: false,
-          residentKey: "preferred",
+        optionsJSON: {
+          ...options,
+          authenticatorSelection: {
+            authenticatorAttachment: "platform" as AuthenticatorAttachment,
+            requireResidentKey: false,
+            residentKey: "preferred" as ResidentKeyRequirement,
+            userVerification: "preferred" as UserVerificationRequirement,
+          },
+          timeout: 60000,
         },
-      };
-      return await startRegistration({
-        optionsJSON: fallbackOptions,
         useAutoRegister: false,
-      });
+      };
+
+      return sanitizeCredentialResponse(
+        await startRegistration(fallbackOptions)
+      );
     }
+
     throw error;
   }
+}
+
+/**
+ * Ensures credential data is properly formatted before sending to the server
+ * This is important for Safari which may handle base64URL differently
+ */
+function sanitizeCredentialResponse(credential: any): any {
+  if (!credential) return credential;
+
+  // Clone to avoid modifying the original
+  const sanitized = { ...credential };
+
+  // Ensure response data is present and properly formatted
+  if (sanitized.response) {
+    // Handle clientDataJSON
+    if (
+      sanitized.response.clientDataJSON &&
+      typeof sanitized.response.clientDataJSON === "string"
+    ) {
+      try {
+        // Ensure it's properly parsed
+        JSON.parse(atob(sanitized.response.clientDataJSON));
+      } catch (e) {
+        console.warn("Fixing malformed clientDataJSON");
+        // If parsing fails, it might not be properly base64 encoded
+        sanitized.response.clientDataJSON = btoa(
+          sanitized.response.clientDataJSON
+        );
+      }
+    }
+
+    // Handle other binary fields that might need encoding
+    ["attestationObject", "authenticatorData"].forEach((field) => {
+      if (
+        sanitized.response[field] &&
+        typeof sanitized.response[field] === "object" &&
+        !ArrayBuffer.isView(sanitized.response[field])
+      ) {
+        console.warn(`Converting ${field} to ArrayBuffer`);
+        // Convert to proper ArrayBuffer if needed
+        sanitized.response[field] = new Uint8Array(
+          Object.values(sanitized.response[field])
+        ).buffer;
+      }
+    });
+  }
+
+  return sanitized;
 }
 
 /**

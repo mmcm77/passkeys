@@ -39,7 +39,7 @@ export interface Challenge {
   id: string;
   challenge: string;
   type: "registration" | "authentication";
-  data: Record<string, any>;
+  data: Record<string, unknown>;
   expiresAt: string;
   createdAt: string;
 }
@@ -66,7 +66,19 @@ export interface BrowserCapabilities {
 }
 
 export interface ConditionalAuthState {
-  active: boolean;
-  status: "idle" | "waiting" | "authenticating" | "success" | "error";
+  status: "available" | "unavailable" | "pending" | "error";
   error?: string;
+}
+
+export interface DeviceCredential {
+  credentialId: string;
+  userId: string;
+  deviceType: string;
+  deviceName: string;
+  browser: string;
+  os: string;
+  userAgent: string;
+  createdAt: number;
+  lastUsedAt: number;
+  isCurrentDevice: boolean;
 }

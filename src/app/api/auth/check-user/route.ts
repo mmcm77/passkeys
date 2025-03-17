@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserByEmail } from "@/lib/db/users";
-import { getCredentialsByUserId } from "@/lib/db/credentials";
 import supabase from "@/lib/supabase";
 import { ErrorCode } from "@/app/api/auth/check-user/types";
 
@@ -108,7 +106,7 @@ const ERROR_MESSAGES: Record<ErrorCode, string> = {
 export interface ErrorResponse {
   error: string;
   code: ErrorCode;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
   timestamp: string;
   requestId?: string;
 }
@@ -118,7 +116,7 @@ type ApiResponse = UserExistsResponse | ErrorResponse;
 // Helper function to create error responses
 function createErrorResponse(
   code: ErrorCode,
-  details?: Record<string, any>,
+  details?: Record<string, unknown>,
   customMessage?: string
 ): ErrorResponse {
   return {
@@ -181,8 +179,7 @@ const HTTP_STATUS: Record<ErrorCode, number> = {
 export async function POST(
   request: NextRequest
 ): Promise<NextResponse<ApiResponse>> {
-  const startTime = Date.now();
-
+  // Track request time for performance metrics and consistent timing
   try {
     // Get client identifier (IP address or other unique identifier)
     const clientIp =
@@ -315,7 +312,7 @@ export async function POST(
           dbError instanceof Error
             ? dbError.message
             : "Database operation failed",
-        errorCode: (dbError as any)?.code,
+        errorCode: (dbError as Error & { code?: string })?.code,
       });
       return NextResponse.json(errorResponse, {
         status: HTTP_STATUS[ErrorCode.DATABASE_ERROR],
