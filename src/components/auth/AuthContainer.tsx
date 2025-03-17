@@ -143,6 +143,7 @@ export default function AuthContainer({
 
   // Add form reference
   const formRef = useRef<HTMLFormElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
 
   // Handle animation states with transition tracking
   useEffect(() => {
@@ -358,21 +359,6 @@ export default function AuthContainer({
     setEmail(newEmail);
     setIsDirty(true);
     setError(null); // Clear error on change
-
-    // Create a new input event with the current value
-    const inputEvent = new Event("input", {
-      bubbles: true,
-      cancelable: true,
-    });
-
-    // Need to redefine the target's value getter to ensure it returns the new value
-    Object.defineProperty(e.target, "value", {
-      value: newEmail,
-      writable: true,
-    });
-
-    // Dispatch the event
-    e.target.dispatchEvent(inputEvent);
   };
 
   const handleError = (error: unknown) => {
@@ -418,26 +404,10 @@ export default function AuthContainer({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Get form data directly from the form element
-    const formElement = e.target as HTMLFormElement;
-    const formData = new FormData(formElement);
-    const formEmail = formData.get("email") as string;
+    // Get email directly from the ref
+    const emailValue = emailInputRef.current?.value || email;
 
-    // Fallback to input element if formData doesn't work
-    const emailInput = document.getElementById(
-      "auth-email"
-    ) as HTMLInputElement;
-    const inputEmail = emailInput?.value || "";
-
-    // Fallback to state if all else fails
-    const emailToUse = formEmail || inputEmail || email;
-
-    console.log("Form submission details:", {
-      formEmail,
-      inputEmail,
-      stateEmail: email,
-      emailToUse,
-    });
+    console.log("Form submission with email:", emailValue);
 
     // Reset states
     setError(null);
@@ -447,8 +417,7 @@ export default function AuthContainer({
     setIsNewUserRegistration(false);
     setLastAttemptTimestamp(Date.now());
 
-    const trimmedEmail = emailToUse.trim();
-    console.log("Trimmed email:", trimmedEmail);
+    const trimmedEmail = emailValue.trim();
 
     // Simple validation before proceeding
     if (!trimmedEmail) {
@@ -791,7 +760,7 @@ export default function AuthContainer({
     });
   };
 
-  // Update the handleEmailSelection function to use the form reference
+  // Update the handleEmailSelection function to use the ref
   const handleEmailSelection = useCallback(
     (selectedEmail: string) => {
       console.log("Email selected:", selectedEmail);
@@ -800,29 +769,19 @@ export default function AuthContainer({
       setEmail(selectedEmail);
       setError(null);
 
-      // Use a proper callback structure for setTimeout
-      const timer = setTimeout(() => {
-        // Update the input field value directly
-        const emailInput = document.getElementById(
-          "auth-email"
-        ) as HTMLInputElement;
-        if (emailInput) {
-          emailInput.value = selectedEmail;
+      // Update the input ref directly
+      if (emailInputRef.current) {
+        emailInputRef.current.value = selectedEmail;
+      }
 
-          // Trigger a change event to ensure React state is updated
-          const event = new Event("input", { bubbles: true });
-          emailInput.dispatchEvent(event);
-        }
-
-        // Submit the form
+      // Submit the form after a short delay
+      setTimeout(() => {
         if (formRef.current) {
           formRef.current.dispatchEvent(
             new Event("submit", { bubbles: true, cancelable: true })
           );
         }
-      }, 100); // Increased timeout to ensure state updates
-
-      return () => clearTimeout(timer);
+      }, 50);
     },
     [setEmail]
   );
@@ -1150,6 +1109,7 @@ export default function AuthContainer({
                         validateEmail(email);
                       }
                     }}
+                    ref={emailInputRef}
                     required
                     autoComplete="username webauthn"
                     data-webauthn="conditional"
