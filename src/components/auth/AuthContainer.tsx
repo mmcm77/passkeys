@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Card,
   CardHeader,
@@ -26,7 +26,6 @@ import {
 import { getWebAuthnCapabilities } from "@/lib/auth/browser-detection";
 import { RecentEmails } from "./RecentEmails";
 import { addRecentEmail } from "@/lib/recentEmails";
-import { ConditionalAuth } from "./ConditionalAuth";
 import { PasskeyIndicator } from "../ui/PasskeyIndicator";
 import type { ConditionalAuthState } from "@/types/auth";
 
@@ -137,12 +136,13 @@ export default function AuthContainer({
 
   const [isConditionalAuthEnabled, setIsConditionalAuthEnabled] =
     useState(false);
+  const isInitializingConditional = useRef(false);
+  const currentChallenge = useRef<{ options: any; challengeId: string } | null>(
+    null
+  );
 
-  const [conditionalAuthState, setConditionalAuthState] =
-    useState<ConditionalAuthState>({
-      active: false,
-      status: "idle",
-    });
+  // Add form reference
+  const formRef = useRef<HTMLFormElement>(null);
 
   // Handle animation states with transition tracking
   useEffect(() => {
@@ -192,45 +192,133 @@ export default function AuthContainer({
     }
   }, [selectedRecentEmail]);
 
-  // Add effect to check for conditional auth support
+  // Add effect to check for conditional auth support and initialize
   useEffect(() => {
-    const checkConditionalSupport = async () => {
-      const capabilities = await getWebAuthnCapabilities();
-      setIsConditionalAuthEnabled(capabilities.hasConditionalMediation);
-    };
-    checkConditionalSupport();
-  }, []);
+    async function initializeConditionalUI() {
+      if (isInitializingConditional.current) return;
+      isInitializingConditional.current = true;
 
-  // Handle conditional auth state changes
-  const handleConditionalAuthStateChange = useCallback(
-    (state: ConditionalAuthState) => {
-      console.log("Conditional auth state changed:", state);
-      setConditionalAuthState(state);
-    },
-    []
-  );
+      try {
+        const response = await fetch("/api/auth/authenticate/options", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "" }), // Empty email for conditional UI
+        });
 
-  // Effect to handle conditional auth state updates
-  useEffect(() => {
-    // Update UI state based on conditional auth status
-    switch (conditionalAuthState.status) {
-      case "authenticating":
-        setAuthState("submitting");
-        break;
-      case "success":
-        setAuthState("authenticated");
-        break;
-      case "error":
-        if (conditionalAuthState.error) {
-          handleError(new Error(conditionalAuthState.error));
+        if (!response.ok) {
+          console.log("Failed to get auth options:", await response.text());
+          return;
         }
-        break;
+
+        const authData = await response.json();
+        currentChallenge.current = authData;
+
+        const { options } = authData;
+        try {
+          const credential = await startAuthentication({
+            optionsJSON: {
+              ...options,
+              mediation: "conditional",
+            },
+            useBrowserAutofill: true,
+          });
+
+          // If we get here, a passkey was selected
+          console.log("Passkey selected through conditional UI");
+
+          const verificationResponse = await fetch(
+            "/api/auth/authenticate/verify",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                credential,
+                challengeId: currentChallenge.current?.challengeId,
+              }),
+            }
+          );
+
+          if (!verificationResponse.ok) {
+            throw new Error("Failed to verify credential");
+          }
+
+          const result = await verificationResponse.json();
+          if (result.authenticated && result.user) {
+            const user: AuthenticatedUser = {
+              userId: result.user.id,
+              email: result.user.email,
+              hasPasskey: true,
+              passkeyCount: result.user.passkeyCount || 1,
+              lastPasskeyAddedAt: result.user.lastPasskeyAddedAt,
+              deviceTypes: result.user.deviceTypes,
+            };
+            setAuthenticatedUser(user);
+            onAuthSuccess?.(user);
+            addRecentEmail(result.user.email);
+            setAuthState("authenticated");
+          }
+        } catch (error: any) {
+          if (error.name === "NotAllowedError") {
+            // User cancelled or no passkey selected - this is expected
+            console.log("User cancelled or no passkey selected");
+          } else if (error.name === "AbortError") {
+            // This is expected when the conditional UI is initialized
+            console.log("Conditional UI ready for user interaction");
+          } else {
+            console.error("Authentication error:", error);
+            handleError(error);
+          }
+        }
+      } catch (error: any) {
+        if (error.name !== "AbortError") {
+          console.error("Error initializing conditional UI:", error);
+        }
+      } finally {
+        isInitializingConditional.current = false;
+      }
     }
-  }, [conditionalAuthState]);
+
+    async function checkAndInitialize() {
+      try {
+        if (
+          !window.PublicKeyCredential ||
+          !window.PublicKeyCredential.isConditionalMediationAvailable ||
+          !(await window.PublicKeyCredential.isConditionalMediationAvailable())
+        ) {
+          return;
+        }
+
+        const capabilities = await getWebAuthnCapabilities();
+        if (capabilities.hasConditionalMediation) {
+          setIsConditionalAuthEnabled(true);
+          await initializeConditionalUI();
+        }
+      } catch (error) {
+        console.error("Failed to check conditional auth support:", error);
+      }
+    }
+
+    // Start initialization
+    checkAndInitialize();
+
+    // Re-initialize on focus
+    const input = document.getElementById("auth-email");
+    if (input) {
+      input.addEventListener("focus", initializeConditionalUI);
+      return () => {
+        input.removeEventListener("focus", initializeConditionalUI);
+        isInitializingConditional.current = false;
+      };
+    }
+
+    return () => {
+      isInitializingConditional.current = false;
+    };
+  }, [onAuthSuccess]);
 
   const validateEmailFormat = (email: string): ValidationResult => {
-    // Basic email format validation
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    // More permissive email regex that still catches obvious errors
+    const emailRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
     if (!email.trim()) {
       return {
@@ -239,25 +327,10 @@ export default function AuthContainer({
       };
     }
 
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(email.trim())) {
       return {
         isValid: false,
         error: "Please enter a valid email address",
-      };
-    }
-
-    // Additional checks for common mistakes
-    if (email.includes("..")) {
-      return {
-        isValid: false,
-        error: "Email cannot contain consecutive dots",
-      };
-    }
-
-    if (email.length > 254) {
-      return {
-        isValid: false,
-        error: "Email address is too long",
       };
     }
 
@@ -284,16 +357,22 @@ export default function AuthContainer({
     const newEmail = e.target.value;
     setEmail(newEmail);
     setIsDirty(true);
+    setError(null); // Clear error on change
 
-    // Only validate if the field is dirty and not empty
-    if (newEmail.trim()) {
-      validateEmail(newEmail, true);
-    } else {
-      setError(null);
-    }
+    // Create a new input event with the current value
+    const inputEvent = new Event("input", {
+      bubbles: true,
+      cancelable: true,
+    });
 
-    // Ensure the input event is triggered for conditional UI
-    e.target.dispatchEvent(new Event("input", { bubbles: true }));
+    // Need to redefine the target's value getter to ensure it returns the new value
+    Object.defineProperty(e.target, "value", {
+      value: newEmail,
+      writable: true,
+    });
+
+    // Dispatch the event
+    e.target.dispatchEvent(inputEvent);
   };
 
   const handleError = (error: unknown) => {
@@ -338,6 +417,29 @@ export default function AuthContainer({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Get form data directly from the form element
+    const formElement = e.target as HTMLFormElement;
+    const formData = new FormData(formElement);
+    const formEmail = formData.get("email") as string;
+
+    // Fallback to input element if formData doesn't work
+    const emailInput = document.getElementById(
+      "auth-email"
+    ) as HTMLInputElement;
+    const inputEmail = emailInput?.value || "";
+
+    // Fallback to state if all else fails
+    const emailToUse = formEmail || inputEmail || email;
+
+    console.log("Form submission details:", {
+      formEmail,
+      inputEmail,
+      stateEmail: email,
+      emailToUse,
+    });
+
+    // Reset states
     setError(null);
     setErrorDetails(null);
     setVerificationStatus(null);
@@ -345,10 +447,19 @@ export default function AuthContainer({
     setIsNewUserRegistration(false);
     setLastAttemptTimestamp(Date.now());
 
-    // Use email state directly instead of form event
-    const validationResult = validateEmail(email);
-    if (!validationResult.isValid) {
-      handleError(new Error(validationResult.error || "Invalid email"));
+    const trimmedEmail = emailToUse.trim();
+    console.log("Trimmed email:", trimmedEmail);
+
+    // Simple validation before proceeding
+    if (!trimmedEmail) {
+      setError("Email is required");
+      return;
+    }
+
+    // Use a simpler regex for validation
+    const simpleEmailRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    if (!simpleEmailRegex.test(trimmedEmail)) {
+      setError("Please enter a valid email address");
       return;
     }
 
@@ -362,7 +473,7 @@ export default function AuthContainer({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email,
+          email: trimmedEmail,
         }),
       });
 
@@ -374,6 +485,7 @@ export default function AuthContainer({
       }
 
       const data = (await response.json()) as UserExistsResponse;
+      console.log("User check response:", data);
       setVerificationStatus({
         exists: data.exists,
         hasPasskeys: data.hasPasskeys,
@@ -468,7 +580,7 @@ export default function AuthContainer({
     if (!isDirty) return "w-full";
     if (error)
       return "w-full border-destructive focus-visible:ring-destructive";
-    if (email && !error)
+    if (email.trim())
       return "w-full border-green-500 focus-visible:ring-green-500";
     return "w-full";
   };
@@ -622,13 +734,16 @@ export default function AuthContainer({
   // Handle conditional auth success
   const handleConditionalAuthSuccess = async (credential: any) => {
     try {
-      const verificationResponse = await fetch("/api/auth/verify", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(credential),
-      });
+      const verificationResponse = await fetch(
+        "/api/auth/authenticate/verify",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(credential),
+        }
+      );
 
       if (!verificationResponse.ok) {
         throw new Error("Failed to verify credential");
@@ -668,32 +783,46 @@ export default function AuthContainer({
 
   // Handle conditional auth not supported
   const handleConditionalAuthNotSupported = () => {
-    setConditionalAuthState((prev) => ({ ...prev, active: false }));
+    setAuthState("error");
+    setErrorDetails({
+      code: "CONDITIONAL_AUTH_NOT_SUPPORTED",
+      message: "Conditional authentication not supported",
+      action: "Please try another method",
+    });
   };
 
-  // Update the handleEmailSelection function
+  // Update the handleEmailSelection function to use the form reference
   const handleEmailSelection = useCallback(
     (selectedEmail: string) => {
       console.log("Email selected:", selectedEmail);
 
       // Update state
       setEmail(selectedEmail);
+      setError(null);
 
-      // Directly submit form after a brief delay to allow state update
-      setTimeout(() => {
-        // Find the actual form element
-        const form = document.querySelector("form");
-        if (form) {
-          // Create a synthetic submit event
-          const submitEvent = new Event("submit", {
-            bubbles: true,
-            cancelable: true,
-          });
+      // Use a proper callback structure for setTimeout
+      const timer = setTimeout(() => {
+        // Update the input field value directly
+        const emailInput = document.getElementById(
+          "auth-email"
+        ) as HTMLInputElement;
+        if (emailInput) {
+          emailInput.value = selectedEmail;
 
-          // Directly call the handleSubmit function bound to the form
-          form.dispatchEvent(submitEvent);
+          // Trigger a change event to ensure React state is updated
+          const event = new Event("input", { bubbles: true });
+          emailInput.dispatchEvent(event);
         }
-      }, 50);
+
+        // Submit the form
+        if (formRef.current) {
+          formRef.current.dispatchEvent(
+            new Event("submit", { bubbles: true, cancelable: true })
+          );
+        }
+      }, 100); // Increased timeout to ensure state updates
+
+      return () => clearTimeout(timer);
     },
     [setEmail]
   );
@@ -1017,11 +1146,14 @@ export default function AuthContainer({
                     value={email}
                     onChange={handleEmailChange}
                     onBlur={() => {
-                      setIsDirty(true);
-                      if (email) validateEmail(email);
+                      if (email.trim()) {
+                        validateEmail(email);
+                      }
                     }}
                     required
-                    autoComplete="webauthn"
+                    autoComplete="username webauthn"
+                    data-webauthn="conditional"
+                    data-form-type="other"
                     className={`${getInputStatusClasses()} 
                       motion-safe:transition-all motion-safe:duration-200
                       ${isSubmitting ? "bg-muted text-muted-foreground" : ""}
@@ -1061,7 +1193,7 @@ export default function AuthContainer({
               <Button
                 type="submit"
                 className="w-full motion-safe:transition-all motion-safe:duration-200 motion-safe:hover:scale-[1.02] motion-safe:active:scale-[0.98]"
-                disabled={isSubmitting || (isDirty && !!error)}
+                disabled={isSubmitting || !email.trim()}
               >
                 {isSubmitting ? (
                   <span className="flex items-center justify-center gap-2 motion-safe:animate-fade-in">
@@ -1081,13 +1213,6 @@ export default function AuthContainer({
   return (
     <Card className="w-full max-w-md mx-auto">
       <CardHeader className="space-y-1">
-        <ConditionalAuth
-          onAuthSuccess={handleConditionalAuthSuccess}
-          onAuthError={handleConditionalAuthError}
-          onNotSupported={handleConditionalAuthNotSupported}
-          onStateChange={handleConditionalAuthStateChange}
-          emailInputId="auth-email"
-        />
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-semibold tracking-tight">
             {mode === "signin" ? "Welcome back" : "Create an account"}
@@ -1095,7 +1220,7 @@ export default function AuthContainer({
           <PasskeyIndicator />
         </div>
       </CardHeader>
-      <form onSubmit={handleSubmit} noValidate>
+      <form onSubmit={handleSubmit} noValidate ref={formRef}>
         <CardContent className="space-y-4 motion-safe:transition-all motion-safe:duration-300">
           {renderAuthStateContent()}
         </CardContent>

@@ -1,5 +1,5 @@
 import supabase from "../supabase";
-import { Credential } from "@/types/auth";
+import type { Credential } from "@/types/auth";
 
 // Store a new credential
 export async function storeCredential(
@@ -27,7 +27,11 @@ export async function storeCredential(
     name: newCredential.name,
   };
 
-  const { error } = await supabase.from("credentials").insert(dbCredential);
+  const { data, error } = await supabase
+    .from("credentials")
+    .insert(dbCredential)
+    .select()
+    .single();
 
   if (error) {
     throw new Error(`Failed to store credential: ${error.message}`);
@@ -110,6 +114,38 @@ export async function getCredentialByCredentialId(
   return null;
 }
 
+// Get credentials by email
+export async function getCredentialsByEmail(
+  email: string
+): Promise<Credential[]> {
+  const { data, error } = await supabase
+    .from("credentials")
+    .select("*")
+    .eq("webauthn_user_id", email);
+
+  if (error) {
+    console.error("Error fetching credentials by email:", error);
+    return [];
+  }
+
+  // Map from snake_case to camelCase
+  return data.map((item) => ({
+    id: item.id,
+    userId: item.user_id,
+    credentialId: item.credential_id,
+    credentialPublicKey: item.credential_public_key,
+    webauthnUserId: item.webauthn_user_id,
+    counter: item.counter,
+    deviceType: item.device_type,
+    backedUp: item.backed_up,
+    transports: item.transports,
+    deviceInfo: item.device_info,
+    createdAt: item.created_at,
+    lastUsedAt: item.last_used_at,
+    name: item.name,
+  }));
+}
+
 // Get all credentials for a user
 export async function getCredentialsByUserId(
   userId: string
@@ -146,14 +182,22 @@ export async function getCredentialsByUserId(
 export async function updateCredential(
   credentialId: string,
   credentialData: Partial<
-    Omit<
+    Pick<
       Credential,
-      "id" | "userId" | "credentialId" | "credentialPublicKey" | "createdAt"
+      | "webauthnUserId"
+      | "counter"
+      | "deviceType"
+      | "backedUp"
+      | "transports"
+      | "deviceInfo"
+      | "lastUsedAt"
+      | "name"
     >
   >
 ): Promise<Credential | null> {
   // Map from camelCase to snake_case
-  const dbCredentialData: any = {};
+  const dbCredentialData: Record<string, any> = {};
+
   if (credentialData.webauthnUserId !== undefined)
     dbCredentialData.webauthn_user_id = credentialData.webauthnUserId;
   if (credentialData.counter !== undefined)
