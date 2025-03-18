@@ -65,11 +65,23 @@ export const config = {
    */
   webauthn: {
     /** The relying party ID (typically the domain name) */
-    rpId: process.env.NEXT_PUBLIC_RP_ID || "",
+    get rpId() {
+      // Client-side runtime detection when env var is not available
+      if (!process.env.NEXT_PUBLIC_RP_ID && typeof window !== "undefined") {
+        return window.location.hostname;
+      }
+      return process.env.NEXT_PUBLIC_RP_ID || "";
+    },
     /** The relying party name (shown to users) */
     rpName: process.env.NEXT_PUBLIC_RP_NAME || "Passkeys App",
     /** The origin for WebAuthn operations */
-    origin: process.env.NEXT_PUBLIC_ORIGIN || "",
+    get origin() {
+      // Client-side runtime detection when env var is not available
+      if (!process.env.NEXT_PUBLIC_ORIGIN && typeof window !== "undefined") {
+        return window.location.origin;
+      }
+      return process.env.NEXT_PUBLIC_ORIGIN || "";
+    },
     /** Whether to enforce cross-platform authenticators */
     requireCrossPlatform: process.env.REQUIRE_CROSS_PLATFORM === "true",
   },

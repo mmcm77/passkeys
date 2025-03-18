@@ -19,38 +19,79 @@ import { AuthenticatorTransportFuture } from "@/types/webauthn";
 
 // Get the Relying Party ID based on environment
 export function getRpId(): string {
-  // Use environment variable NEXT_PUBLIC_RP_ID if available
-  if (process.env.NEXT_PUBLIC_RP_ID) {
-    return process.env.NEXT_PUBLIC_RP_ID;
+  // In production, the RP ID must be the domain where the app is hosted
+  if (process.env.NODE_ENV === "production") {
+    // Use environment variable NEXT_PUBLIC_RP_ID if available
+    if (process.env.NEXT_PUBLIC_RP_ID) {
+      console.log(
+        `Using RP ID from NEXT_PUBLIC_RP_ID: ${process.env.NEXT_PUBLIC_RP_ID}`
+      );
+      return process.env.NEXT_PUBLIC_RP_ID;
+    }
+
+    // Fall back to NEXT_PUBLIC_DOMAIN
+    if (process.env.NEXT_PUBLIC_DOMAIN) {
+      console.log(
+        `Using RP ID from NEXT_PUBLIC_DOMAIN: ${process.env.NEXT_PUBLIC_DOMAIN}`
+      );
+      return process.env.NEXT_PUBLIC_DOMAIN;
+    }
+
+    // Get domain from window if available (client-side only)
+    if (typeof window !== "undefined") {
+      const domain = window.location.hostname;
+      console.log(`Using RP ID from current hostname: ${domain}`);
+      return domain;
+    }
+
+    // Last resort fallback
+    console.warn(
+      "⚠️ No RP ID available. Using default fallback, which will likely cause errors!"
+    );
+    return "your-domain.com";
   }
 
-  // Fall back to NEXT_PUBLIC_DOMAIN
-  if (process.env.NEXT_PUBLIC_DOMAIN) {
-    return process.env.NEXT_PUBLIC_DOMAIN;
-  }
-
-  // Default fallback based on environment
-  return process.env.NODE_ENV === "production"
-    ? "your-domain.com"
-    : "localhost";
+  // For development, localhost is fine
+  return "localhost";
 }
 
 // Get the expected origin based on environment
 export function getExpectedOrigin(): string {
-  // Use environment variable NEXT_PUBLIC_ORIGIN if available
-  if (process.env.NEXT_PUBLIC_ORIGIN) {
-    return process.env.NEXT_PUBLIC_ORIGIN;
+  // In production, use proper origin
+  if (process.env.NODE_ENV === "production") {
+    // Use environment variable NEXT_PUBLIC_ORIGIN if available
+    if (process.env.NEXT_PUBLIC_ORIGIN) {
+      console.log(
+        `Using origin from NEXT_PUBLIC_ORIGIN: ${process.env.NEXT_PUBLIC_ORIGIN}`
+      );
+      return process.env.NEXT_PUBLIC_ORIGIN;
+    }
+
+    // Fall back to constructing from domain
+    if (process.env.NEXT_PUBLIC_DOMAIN) {
+      const origin = `https://${process.env.NEXT_PUBLIC_DOMAIN}`;
+      console.log(
+        `Using constructed origin from NEXT_PUBLIC_DOMAIN: ${origin}`
+      );
+      return origin;
+    }
+
+    // Get origin from window if available (client-side only)
+    if (typeof window !== "undefined") {
+      const origin = window.location.origin;
+      console.log(`Using origin from current window: ${origin}`);
+      return origin;
+    }
+
+    // Last resort fallback
+    console.warn(
+      "⚠️ No origin available. Using default fallback, which will likely cause errors!"
+    );
+    return "https://your-domain.com";
   }
 
-  // Fall back to constructing from domain
-  if (process.env.NEXT_PUBLIC_DOMAIN) {
-    return `https://${process.env.NEXT_PUBLIC_DOMAIN}`;
-  }
-
-  // Default fallback based on environment
-  return process.env.NODE_ENV === "production"
-    ? "https://your-domain.com"
-    : "http://localhost:3000";
+  // For development
+  return "http://localhost:3000";
 }
 
 // Generate registration options
@@ -185,10 +226,22 @@ export async function generatePasskeyOptions(
   // Get existing credentials
   const existingCredentials = await getCredentialsByUserId(userId);
 
+  // Get RP ID and other configs
+  const rpId = config.webauthn.rpId;
+  const rpName = config.webauthn.rpName;
+
+  console.log(`Generating passkey options with RP ID: ${rpId}`);
+  console.log(`RP Name: ${rpName}`);
+
+  if (!rpId) {
+    console.error("No RP ID available for passkey generation");
+    throw new Error("Missing RP ID configuration");
+  }
+
   // Generate registration options
   const options = await generateRegistrationOptions({
-    rpName: config.webauthn.rpName,
-    rpID: config.webauthn.rpId,
+    rpName: rpName,
+    rpID: rpId,
     userID: new Uint8Array(Buffer.from(userId)),
     userName: user.email,
     userDisplayName: user.displayName || user.email,

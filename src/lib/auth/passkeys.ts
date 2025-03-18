@@ -10,9 +10,11 @@ import { getWebAuthnCapabilities } from "./browser-detection";
  */
 export async function isPasskeySupported(): Promise<boolean> {
   try {
+    console.log("Checking passkey support with current configuration...");
+
     // Check if WebAuthn is available in the browser
     if (typeof window === "undefined" || !window.PublicKeyCredential) {
-      console.log("Passkey support check: WebAuthn not available");
+      console.error("Passkey support check: WebAuthn not available");
       return false;
     }
 
@@ -29,6 +31,12 @@ export async function isPasskeySupported(): Promise<boolean> {
       return true;
     }
 
+    // Check runtime configuration
+    if (typeof window !== "undefined") {
+      console.log("Current hostname:", window.location.hostname);
+      console.log("Current origin:", window.location.origin);
+    }
+
     // Check if conditional UI is supported
     const conditionalSupported =
       "conditional" in window.PublicKeyCredential &&
@@ -36,7 +44,7 @@ export async function isPasskeySupported(): Promise<boolean> {
         "function";
 
     if (!conditionalSupported) {
-      console.log("Passkey support check: Conditional UI not supported");
+      console.error("Passkey support check: Conditional UI not supported");
       return false;
     }
 
@@ -45,19 +53,32 @@ export async function isPasskeySupported(): Promise<boolean> {
       await window.PublicKeyCredential.isConditionalMediationAvailable();
 
     if (!isConditionalAvailable) {
-      console.log("Passkey support check: Conditional mediation not available");
+      console.error(
+        "Passkey support check: Conditional mediation not available"
+      );
       return false;
     }
 
     // Get additional WebAuthn capabilities
     const capabilities = await getWebAuthnCapabilities();
     console.log(
-      "Passkey support check: Platform authenticator available:",
+      "Platform authenticator available:",
       capabilities.hasPlatformAuthenticator
     );
 
     // For full passkey support, we need platform authenticator
-    return capabilities.hasPlatformAuthenticator;
+    const supported = capabilities.hasPlatformAuthenticator;
+    if (!supported) {
+      console.error(
+        "Passkey support check: Platform authenticator not available"
+      );
+    } else {
+      console.log(
+        "Passkey support check: All conditions met, passkeys are supported"
+      );
+    }
+
+    return supported;
   } catch (error) {
     console.error("Error checking passkey support:", error);
     return false;
