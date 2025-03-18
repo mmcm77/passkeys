@@ -83,3 +83,16 @@ export interface DeviceCredential {
   lastUsedAt: number;
   isCurrentDevice: boolean;
 }
+
+export interface EcosystemCredential {
+  provider:
+    | "iCloud Keychain"
+    | "Google Password Manager"
+    | "Microsoft Account"
+    | "Other";
+  credentials: Credential[];
+  createdAt: number;
+  lastUsedAt: number;
+  isMultiDevice: boolean;
+  isBackedUp: boolean;
+}
