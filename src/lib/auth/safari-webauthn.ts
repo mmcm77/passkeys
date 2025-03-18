@@ -44,7 +44,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   let binary = "";
 
   for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
+    binary += String.fromCharCode(bytes[i] as number);
   }
 
   const base64 = window.btoa(binary);

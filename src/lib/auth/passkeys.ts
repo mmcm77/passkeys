@@ -40,16 +40,24 @@ export async function isPasskeySupported(): Promise<boolean> {
     // Get browser info for special cases
     const userAgent = navigator.userAgent;
     const isChrome = /Chrome/.test(userAgent) && !/Edg/.test(userAgent);
+    const isSafari = /Safari/.test(userAgent) && !/Chrome/.test(userAgent);
+    const isMajorBrowser = isChrome || isSafari;
+
     console.log("Browser is Chrome:", isChrome);
+    console.log("Browser is Safari:", isSafari);
 
     // Check if conditional UI is supported
-    // Chrome has a bug where the type check can fail but conditional UI still works
+    // Chrome and Safari have great passkey support, but detection can fail
     let conditionalSupported = false;
 
-    if (isChrome) {
-      // For Chrome, don't rely on property type checks that can fail in emulator
+    if (isMajorBrowser) {
+      // For Chrome and Safari, don't rely on property type checks that can fail
       conditionalSupported = true;
-      console.log("Chrome detected: assuming conditional UI is supported");
+      console.log(
+        `${
+          isChrome ? "Chrome" : "Safari"
+        } detected: assuming conditional UI is supported`
+      );
     } else {
       conditionalSupported =
         "conditional" in window.PublicKeyCredential &&
@@ -74,14 +82,16 @@ export async function isPasskeySupported(): Promise<boolean> {
         return false;
       }
     } catch (error) {
-      // If there's an error checking conditional mediation but we're on Chrome,
+      // If there's an error checking conditional mediation but we're on Chrome or Safari,
       // we'll still proceed and assume it's supported
-      if (!isChrome) {
+      if (!isMajorBrowser) {
         console.error("Error checking conditional mediation:", error);
         return false;
       }
       console.warn(
-        "Error checking conditional mediation, but continuing for Chrome"
+        `Error checking conditional mediation, but continuing for ${
+          isChrome ? "Chrome" : "Safari"
+        }`
       );
     }
 
@@ -102,6 +112,15 @@ export async function isPasskeySupported(): Promise<boolean> {
       console.log(
         "Passkey support check: All conditions met, passkeys are supported"
       );
+    }
+
+    // For Safari and Chrome, we'll explicitly return true even if some checks might fail
+    // These browsers have proven passkey support
+    if (isMajorBrowser && capabilities.hasPlatformAuthenticator) {
+      console.log(
+        `Enabling passkey support for ${isChrome ? "Chrome" : "Safari"}`
+      );
+      return true;
     }
 
     return supported;
