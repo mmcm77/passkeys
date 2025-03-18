@@ -1,89 +1,127 @@
-import { Button } from "@/components/ui/button";
-import { useCallback } from "react";
-import { startAuthentication } from "@simplewebauthn/browser";
-import { KeyIcon, ChevronRight } from "lucide-react";
+"use client";
 
-interface PasskeyLoginButtonProps {
+import { useState } from "react";
+import type { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import { KeyRound } from "lucide-react";
+import { startAuthentication } from "@simplewebauthn/browser";
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from "@simplewebauthn/browser";
+
+// Replace any with proper types
+interface PasskeyLoginProps {
   email: string;
-  onSuccess: (user: any) => void;
+  onSuccess: (user: UserData) => void;
   onError: (error: Error) => void;
-  buttonStyle?: "standard" | "simplified";
+  buttonStyle?: "default" | "simplified" | "embedded";
+}
+
+// Define a proper type for user data
+interface UserData {
+  id: string;
+  email: string;
+  passkeyCount?: number;
+  deviceTypes?: string[];
+  [key: string]: unknown; // Allow for additional properties
+}
+
+// Define types for authentication response
+interface AuthResponse {
+  options: PublicKeyCredentialRequestOptionsJSON;
+  challengeId: string;
 }
 
 export function PasskeyLoginButton({
   email,
   onSuccess,
   onError,
-  buttonStyle = "standard",
-}: PasskeyLoginButtonProps) {
-  const initiateAuthentication = useCallback(async () => {
-    try {
-      // Get authentication options
-      const response = await fetch("/api/auth/authenticate/options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
+  buttonStyle = "default",
+}: PasskeyLoginProps): ReactNode {
+  const [isLoading, setIsLoading] = useState(false);
 
-      if (!response.ok) {
-        throw new Error("Failed to get authentication options");
+  const handlePasskeyLogin = async (): Promise<void> => {
+    try {
+      setIsLoading(true);
+
+      // Get authentication options from server
+      const authResponse = await fetch(
+        `/api/auth/authenticate/options?email=${encodeURIComponent(email)}`
+      );
+
+      if (!authResponse.ok) {
+        throw new Error(
+          `Failed to get authentication options: ${authResponse.status}`
+        );
       }
 
-      const { options, challengeId } = await response.json();
+      const { options, challengeId } =
+        (await authResponse.json()) as AuthResponse;
 
-      // Start authentication
-      const credential = await startAuthentication(options);
+      // Start authentication with proper options format
+      const authenticationResponse = await startAuthentication({
+        optionsJSON: options,
+      });
 
-      // Verify authentication
+      // Verify authentication with server
       const verifyResponse = await fetch("/api/auth/authenticate/verify", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential, challengeId }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          credential: authenticationResponse,
+          challengeId,
+        }),
       });
 
       if (!verifyResponse.ok) {
-        throw new Error("Authentication verification failed");
+        throw new Error(
+          `Authentication verification failed: ${verifyResponse.status}`
+        );
       }
 
-      const data = await verifyResponse.json();
-      onSuccess(data.user);
+      const userData = (await verifyResponse.json()) as {
+        user: UserData;
+        authenticated: boolean;
+      };
+
+      if (userData.authenticated && userData.user) {
+        onSuccess(userData.user);
+      } else {
+        throw new Error("Authentication failed");
+      }
     } catch (error) {
-      console.error("Authentication error:", error);
+      console.error("Passkey login error:", error);
       onError(
-        error instanceof Error ? error : new Error("Authentication failed")
+        error instanceof Error
+          ? error
+          : new Error("Unknown authentication error")
       );
+    } finally {
+      setIsLoading(false);
     }
-  }, [email, onSuccess, onError]);
+  };
 
-  if (buttonStyle === "simplified") {
-    return (
-      <button
-        className="w-full flex items-center justify-between p-4 border rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer text-left"
-        onClick={initiateAuthentication}
-      >
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-full bg-white/10 flex items-center justify-center">
-            <KeyIcon className="h-5 w-5 text-white" />
-          </div>
-          <div>
-            <p className="font-medium">Login with Passkey</p>
-            <p className="text-sm opacity-90">{email}</p>
-          </div>
-        </div>
-        <div>
-          <ChevronRight className="h-5 w-5" />
-        </div>
-      </button>
-    );
-  }
-
+  // Use the buttonStyle prop to customize the button appearance
   return (
     <Button
-      className="w-full flex items-center justify-center gap-2"
-      onClick={initiateAuthentication}
+      className="w-full"
+      variant="default"
+      disabled={isLoading}
+      onClick={() => void handlePasskeyLogin()}
     >
-      <KeyIcon size={16} />
-      <span>Login with Passkey</span>
+      {isLoading ? (
+        "Authenticating..."
+      ) : buttonStyle === "simplified" ? (
+        "Continue with passkey"
+      ) : (
+        <>
+          <KeyRound className="mr-2 h-4 w-4" />
+          Sign in with passkey
+        </>
+      )}
     </Button>
   );
 }

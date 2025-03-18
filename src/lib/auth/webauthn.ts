@@ -3,10 +3,19 @@ import {
   generateAuthenticationOptions,
   verifyRegistrationResponse,
   verifyAuthenticationResponse,
-  AuthenticatorTransportFuture,
+  GenerateRegistrationOptionsOpts,
+  GenerateAuthenticationOptionsOpts,
+  VerifyRegistrationResponseOpts,
+  VerifyAuthenticationResponseOpts,
+  RegistrationResponseJSON,
+  AuthenticationResponseJSON,
 } from "@simplewebauthn/server";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 import { StoredCredential } from "@/types/auth";
+import { getUserById } from "@/lib/db/users";
+import { getCredentialsByUserId } from "@/lib/db/credentials";
+import { config } from "@/lib/config";
+import { AuthenticatorTransportFuture } from "@/types/webauthn";
 
 // Get the Relying Party ID based on environment
 export function getRpId(): string {
@@ -27,11 +36,11 @@ export async function generateWebAuthnRegistrationOptions(
   userId: string,
   userName: string,
   userDisplayName: string
-) {
+): Promise<ReturnType<typeof generateRegistrationOptions>> {
   // Convert userId to Buffer as required by SimpleWebAuthn
   const userIdBuffer = new TextEncoder().encode(userId);
 
-  return generateRegistrationOptions({
+  const options: GenerateRegistrationOptionsOpts = {
     rpName: "Passkeys App",
     rpID: getRpId(),
     userID: userIdBuffer,
@@ -45,7 +54,9 @@ export async function generateWebAuthnRegistrationOptions(
     },
     // Exclude Ed25519 for wider compatibility
     supportedAlgorithmIDs: [-7, -257],
-  });
+  };
+
+  return generateRegistrationOptions(options);
 }
 
 // Generate authentication options
@@ -54,33 +65,37 @@ export async function generateWebAuthnAuthenticationOptions(
     id: string;
     transports?: AuthenticatorTransportFuture[];
   }[] = []
-) {
-  return generateAuthenticationOptions({
+): Promise<ReturnType<typeof generateAuthenticationOptions>> {
+  const options: GenerateAuthenticationOptionsOpts = {
     rpID: getRpId(),
     allowCredentials,
     userVerification: "preferred",
-  });
+  };
+
+  return generateAuthenticationOptions(options);
 }
 
 // Verify registration response
 export async function verifyWebAuthnRegistration(
-  response: any,
+  response: RegistrationResponseJSON,
   expectedChallenge: string
-) {
-  return verifyRegistrationResponse({
+): Promise<ReturnType<typeof verifyRegistrationResponse>> {
+  const options: VerifyRegistrationResponseOpts = {
     response,
     expectedChallenge,
     expectedOrigin: getExpectedOrigin(),
     expectedRPID: getRpId(),
-  });
+  };
+
+  return verifyRegistrationResponse(options);
 }
 
 // Verify authentication response
 export async function verifyWebAuthnAuthentication(
-  response: any,
+  response: AuthenticationResponseJSON,
   expectedChallenge: string,
   credential: StoredCredential
-) {
+): Promise<ReturnType<typeof verifyAuthenticationResponse>> {
   try {
     console.log("=== WEBAUTHN AUTHENTICATION DETAILS ===");
     console.log("Original credentialID:", credential.credentialID);
@@ -94,52 +109,30 @@ export async function verifyWebAuthnAuthentication(
       ? credential.credentialID
       : isoBase64URL.fromBuffer(Buffer.from(credential.credentialID, "base64"));
 
-    // Convert the public key to a Buffer
-    let publicKey: Buffer;
-
-    try {
-      // Decode the base64url-encoded public key
-      publicKey = Buffer.from(
-        isoBase64URL.toBuffer(credential.credentialPublicKey)
-      );
-
-      // Log the key details for debugging
-      console.log("Decoded public key length:", publicKey.length);
-
-      // Check if the public key has at least one byte
-      if (publicKey.length > 0) {
-        // Use non-null assertion for type safety since we've verified length is > 0
-        const firstByte = publicKey[0]!;
-        console.log("First byte value:", firstByte.toString(16));
-
-        // Verify the key starts with the expected COSE_Key header (0xA5)
-        if (firstByte !== 0xa5) {
-          throw new Error("Invalid public key format: Expected COSE key type");
-        }
-      } else {
-        throw new Error("Invalid public key: Empty buffer");
-      }
-    } catch (error) {
-      console.error("Error decoding public key:", error);
-      throw new Error(
-        `Failed to decode credential public key: ${(error as Error).message}`
-      );
-    }
-
-    // Log the final values
-    console.log("Final credentialId:", credentialId);
-    console.log("Final publicKey length:", publicKey.length);
-
-    // Check if publicKey has bytes before accessing them
-    if (publicKey.length > 0) {
-      // We can safely use non-null assertion since we've verified length > 0
-      const firstByte = publicKey[0]!;
-      console.log("First byte (hex):", firstByte.toString(16));
+    // Convert credentialPublicKey to the correct format if needed
+    let publicKey: Uint8Array;
+    if (typeof credential.credentialPublicKey === "string") {
+      publicKey = isoBase64URL.toBuffer(credential.credentialPublicKey);
+    } else if (
+      credential.credentialPublicKey &&
+      typeof credential.credentialPublicKey === "object" &&
+      "buffer" in credential.credentialPublicKey
+    ) {
+      // Handle Uint8Array or array-like objects
+      publicKey = new Uint8Array(credential.credentialPublicKey as ArrayBuffer);
+    } else if (Buffer.isBuffer(credential.credentialPublicKey)) {
+      publicKey = new Uint8Array(credential.credentialPublicKey);
     } else {
-      console.warn("Public key buffer is empty");
+      // Default fallback (treat as base64 string)
+      publicKey = isoBase64URL.toBuffer(
+        isoBase64URL.fromBuffer(
+          Buffer.from(String(credential.credentialPublicKey), "base64")
+        )
+      );
     }
 
-    console.log("======================================");
+    console.log("Formatted credentialId:", credentialId);
+    console.log("Formatted publicKey type:", typeof publicKey);
 
     return verifyAuthenticationResponse({
       response,
@@ -148,13 +141,47 @@ export async function verifyWebAuthnAuthentication(
       expectedRPID: getRpId(),
       credential: {
         id: credentialId,
-        publicKey,
+        publicKey: publicKey,
         counter: credential.counter,
       },
-      requireUserVerification: true,
     });
   } catch (error) {
-    console.error("WebAuthn Authentication Error:", error);
+    console.error("Error in verifyWebAuthnAuthentication:", error);
     throw error;
   }
+}
+
+export async function generatePasskeyOptions(
+  userId: string
+): Promise<PublicKeyCredentialCreationOptionsJSON> {
+  // Get user details
+  const user = await getUserById(userId);
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  // Get existing credentials
+  const existingCredentials = await getCredentialsByUserId(userId);
+
+  // Generate registration options
+  const options = await generateRegistrationOptions({
+    rpName: config.webauthn.rpName,
+    rpID: config.webauthn.rpId,
+    userID: new Uint8Array(Buffer.from(userId)),
+    userName: user.email,
+    userDisplayName: user.displayName || user.email,
+    attestationType: "none",
+    authenticatorSelection: {
+      residentKey: "required",
+      userVerification: "preferred",
+      authenticatorAttachment: "platform",
+    },
+    excludeCredentials: existingCredentials.map((cred) => ({
+      id: cred.credentialId,
+      type: "public-key",
+      transports: ["internal"],
+    })),
+  });
+
+  return options;
 }

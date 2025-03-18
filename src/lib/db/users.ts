@@ -1,5 +1,9 @@
 import supabase from "../supabase";
 import { User } from "@/types/auth";
+import { Database } from "@/types/database";
+
+type DbUser = Database["public"]["Tables"]["users"]["Row"];
+type DbCredential = Database["public"]["Tables"]["credentials"]["Row"];
 
 // Create a new user
 export async function createUser(userData: {
@@ -18,7 +22,7 @@ export async function createUser(userData: {
   };
 
   // Map to snake_case for the database
-  const dbUser = {
+  const dbUser: Database["public"]["Tables"]["users"]["Insert"] = {
     id: newUser.id,
     email: newUser.email,
     display_name: newUser.displayName,
@@ -41,36 +45,32 @@ export async function getUserById(userId: string): Promise<User | null> {
     .from("users")
     .select("*")
     .eq("id", userId)
-    .single();
+    .returns<DbUser[]>()
+    .maybeSingle();
 
-  if (error) {
+  if (error || !data) {
     console.error("Error fetching user by ID:", error);
     return null;
   }
 
-  // Map from snake_case to camelCase
-  if (data) {
-    return {
-      id: data.id,
-      email: data.email,
-      displayName: data.display_name,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    };
-  }
-
-  return null;
+  return {
+    id: data.id,
+    email: data.email,
+    displayName: data.display_name,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  };
 }
 
 // Get a user by email
 export async function getUserByEmail(email: string): Promise<User | null> {
   try {
-    // Use the SQL query approach with explicit format specifier
     const { data, error } = await supabase
       .from("users")
       .select("*")
       .eq("email", email)
-      .limit(1);
+      .limit(1)
+      .returns<DbUser[]>();
 
     if (error) {
       console.error("Error fetching user by email:", error);
@@ -83,13 +83,17 @@ export async function getUserByEmail(email: string): Promise<User | null> {
     }
 
     // Map from snake_case to camelCase (get first result)
-    const userData = data[0];
+    const dbUser = data[0];
+    if (!dbUser) {
+      return null;
+    }
+
     return {
-      id: userData.id,
-      email: userData.email,
-      displayName: userData.display_name,
-      createdAt: userData.created_at,
-      updatedAt: userData.updated_at,
+      id: dbUser.id,
+      email: dbUser.email,
+      displayName: dbUser.display_name,
+      createdAt: dbUser.created_at,
+      updatedAt: dbUser.updated_at,
     };
   } catch (error) {
     console.error("Exception fetching user by email:", error);
@@ -98,7 +102,15 @@ export async function getUserByEmail(email: string): Promise<User | null> {
 }
 
 // Add function to get a user with their credential count
-export async function getUserWithCredentials(email: string) {
+export async function getUserWithCredentials(email: string): Promise<{
+  id: string;
+  email: string;
+  displayName?: string;
+  createdAt: number;
+  updatedAt: number;
+  passkeyCount: number;
+  lastPasskeyAddedAt: number | null;
+} | null> {
   if (!email) return null;
 
   // First get the user
@@ -109,7 +121,8 @@ export async function getUserWithCredentials(email: string) {
   const { data: credentials, error } = await supabase
     .from("credentials")
     .select("id, created_at")
-    .eq("user_id", user.id);
+    .eq("user_id", user.id)
+    .returns<Pick<DbCredential, "id" | "created_at">[]>();
 
   if (error) {
     console.error("Error fetching credentials:", error);
@@ -131,37 +144,29 @@ export async function updateUser(
   userData: Partial<Omit<User, "id" | "createdAt">>
 ): Promise<User | null> {
   // Map from camelCase to snake_case
-  const dbUserData: Record<string, unknown> = {};
-  if (userData.displayName !== undefined)
-    dbUserData.display_name = userData.displayName;
-  if (userData.updatedAt !== undefined)
-    dbUserData.updated_at = userData.updatedAt;
-
-  // Always update the updated_at field
-  dbUserData.updated_at = Date.now();
+  const dbUserData: Database["public"]["Tables"]["users"]["Update"] = {
+    display_name: userData.displayName,
+    updated_at: Date.now(),
+  };
 
   const { data, error } = await supabase
     .from("users")
     .update(dbUserData)
     .eq("id", userId)
     .select()
-    .single();
+    .returns<DbUser[]>()
+    .maybeSingle();
 
-  if (error) {
+  if (error || !data) {
     console.error("Error updating user:", error);
     return null;
   }
 
-  // Map from snake_case to camelCase
-  if (data) {
-    return {
-      id: data.id,
-      email: data.email,
-      displayName: data.display_name,
-      createdAt: data.created_at,
-      updatedAt: data.updated_at,
-    };
-  }
-
-  return null;
+  return {
+    id: data.id,
+    email: data.email,
+    displayName: data.display_name,
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  };
 }

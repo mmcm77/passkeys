@@ -34,10 +34,12 @@ export interface Database {
           user_id: string;
           credential_id: string;
           credential_public_key: string;
+          webauthn_user_id: string;
           counter: number;
           device_type?: string;
           backed_up?: boolean;
           transports?: string[];
+          device_info?: Record<string, unknown>;
           created_at: number;
           last_used_at: number;
           name?: string;
@@ -47,10 +49,12 @@ export interface Database {
           user_id: string;
           credential_id: string;
           credential_public_key: string;
+          webauthn_user_id: string;
           counter: number;
           device_type?: string;
           backed_up?: boolean;
           transports?: string[];
+          device_info?: Record<string, unknown>;
           created_at?: number;
           last_used_at?: number;
           name?: string;
@@ -60,10 +64,12 @@ export interface Database {
           user_id?: string;
           credential_id?: string;
           credential_public_key?: string;
+          webauthn_user_id?: string;
           counter?: number;
           device_type?: string;
           backed_up?: boolean;
           transports?: string[];
+          device_info?: Record<string, unknown>;
           created_at?: number;
           last_used_at?: number;
           name?: string;

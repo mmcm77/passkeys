@@ -1,58 +1,49 @@
-import { NextRequest } from "next/server";
-import { generateAuthenticationOptions } from "@simplewebauthn/server";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  generateAuthenticationOptions,
+  type PublicKeyCredentialRequestOptionsJSON,
+} from "@simplewebauthn/server";
 import { getWebAuthnCapabilities } from "@/lib/auth/browser-detection";
 import { prepareConditionalAuth } from "@/lib/auth/conditional-webauthn";
 import { storeChallenge } from "@/lib/auth/challenge-manager";
+import { logger } from "@/lib/api/logger";
+import { config } from "@/lib/config";
+
+// Create a scoped logger for this route
+const condUiLogger = logger.scope("ConditionalUI");
+
+interface ConditionalUIResponse {
+  options: PublicKeyCredentialRequestOptionsJSON;
+  error?: string;
+}
 
 /**
  * POST /api/auth/conditional-ui
  * Returns authentication options optimized for conditional UI
  */
-export async function POST(request: NextRequest) {
+export async function POST(
+  request: Request
+): Promise<NextResponse<ConditionalUIResponse>> {
   try {
-    // Parse the request body to get email
-    const { email } = await request.json();
+    const body = (await request.json()) as {
+      userId: string;
+      userVerification?: "required" | "preferred" | "discouraged";
+    };
 
-    // Check browser capabilities first
-    const capabilities = await getWebAuthnCapabilities();
-    if (!capabilities.hasConditionalMediation) {
-      return Response.json(
-        { error: "Browser does not support conditional UI" },
-        { status: 400 }
-      );
-    }
-
-    // Generate base authentication options
     const options = await generateAuthenticationOptions({
-      rpID: process.env.NEXT_PUBLIC_RP_ID || "localhost",
-      userVerification: "preferred",
-      allowCredentials: [], // Empty for discovery
+      rpID: process.env.NEXT_PUBLIC_RP_ID!,
+      userVerification: body.userVerification || "preferred",
+      timeout: 60000,
     });
 
-    // Enhance options for conditional UI
-    const enhancedOptions = await prepareConditionalAuth(options, {
-      mediation: "conditional",
-      timeout: 60000, // 1 minute timeout
-    });
-
-    // Store the challenge for later verification
-    const challengeId = await storeChallenge(
-      "authentication",
-      options.challenge,
+    return NextResponse.json({ options });
+  } catch (error) {
+    console.error("Error generating authentication options:", error);
+    return NextResponse.json(
       {
-        email,
-      }
-    );
-
-    // Return both the options and challengeId
-    return Response.json({
-      options: enhancedOptions.optionsJSON,
-      challengeId,
-    });
-  } catch (error: unknown) {
-    console.error("Conditional UI authentication error:", error);
-    return Response.json(
-      { error: "Failed to generate authentication options" },
+        options: null as any,
+        error: "Failed to generate authentication options",
+      },
       { status: 500 }
     );
   }

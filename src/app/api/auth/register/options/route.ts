@@ -2,19 +2,42 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateWebAuthnRegistrationOptions } from "@/lib/auth/webauthn";
 import { createUser, getUserByEmail } from "@/lib/db/users";
 import { storeChallenge } from "@/lib/auth/challenge-manager";
+import { logger } from "@/lib/api/logger";
+import type { PublicKeyCredentialCreationOptionsJSON } from "@simplewebauthn/server";
 
-export async function POST(request: NextRequest) {
+// Create a scoped logger for this route
+const registerLogger = logger.scope("RegisterOptions");
+
+type RegistrationOptionsResponse = PublicKeyCredentialCreationOptionsJSON & {
+  challengeId: string;
+};
+
+interface RegistrationRequestBody {
+  email: string;
+  displayName: string;
+}
+
+export async function POST(
+  request: NextRequest
+): Promise<NextResponse<RegistrationOptionsResponse | { error: string }>> {
   try {
-    const { email, displayName } = await request.json();
+    const body = (await request.json()) as RegistrationRequestBody;
+    const { email, displayName } = body;
+    registerLogger.log(`Processing registration for email: ${email}`);
 
     // Check if user exists
     let user = await getUserByEmail(email);
     if (!user) {
+      registerLogger.log("User does not exist, creating new user");
       // Create new user
       user = await createUser({ email, displayName });
+      registerLogger.debug(`Created new user with ID: ${user.id}`);
+    } else {
+      registerLogger.log(`User already exists with ID: ${user.id}`);
     }
 
     // Generate registration options
+    registerLogger.debug("Generating WebAuthn registration options");
     const options = await generateWebAuthnRegistrationOptions(
       user.id,
       user.email,
@@ -22,6 +45,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Store challenge
+    registerLogger.debug("Storing challenge");
     const challengeId = await storeChallenge(
       "registration",
       options.challenge,
@@ -31,16 +55,18 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    // Return the options directly in the response, along with the challengeId
+    registerLogger.log("Registration options created successfully");
+
+    // Return the options using NextResponse
     return NextResponse.json({
-      ...options, // Spread the registration options at the top level
-      challengeId, // Include challengeId as an additional field
+      ...options,
+      challengeId,
     });
   } catch (error) {
-    console.error("Registration options error:", error);
+    registerLogger.error("Error creating registration options:", error);
     return NextResponse.json(
-      { error: (error as Error).message },
-      { status: 400 }
+      { error: "Failed to create registration options" },
+      { status: 500 }
     );
   }
 }

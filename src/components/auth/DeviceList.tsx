@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Laptop, Smartphone, Tablet, Trash2, Loader2 } from "lucide-react";
@@ -25,10 +26,10 @@ export function DeviceList({
   devices,
   isLoading,
   onRemoveDevice,
-}: DeviceListProps) {
+}: DeviceListProps): React.ReactElement {
   const [removingId, setRemovingId] = useState<string | null>(null);
 
-  const handleRemove = async (credentialId: string) => {
+  const handleRemove = async (credentialId: string): Promise<void> => {
     setRemovingId(credentialId);
     try {
       await onRemoveDevice(credentialId);
@@ -37,7 +38,7 @@ export function DeviceList({
     }
   };
 
-  const getDeviceIcon = (deviceType: string, userAgent: string) => {
+  const getDeviceIcon = (deviceType: string): React.ReactElement => {
     // Normalize device type to lowercase
     const type = deviceType.toLowerCase();
 
@@ -60,7 +61,7 @@ export function DeviceList({
     }
   };
 
-  const getDeviceName = (device: DeviceCredential) => {
+  const getDeviceName = (device: DeviceCredential): string => {
     // If device has a custom name, use that
     if (device.name) return device.name;
 
@@ -124,7 +125,7 @@ export function DeviceList({
         >
           <div className="flex items-center space-x-3">
             <div className="bg-muted p-2 rounded-full">
-              {getDeviceIcon(device.deviceType, device.userAgent)}
+              {getDeviceIcon(device.deviceType)}
             </div>
             <div>
               <div className="font-medium">{getDeviceName(device)}</div>

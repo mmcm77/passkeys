@@ -2,6 +2,10 @@ import { randomBytes } from "crypto";
 import { cookies } from "next/headers";
 import supabase from "../supabase";
 import { Session } from "@/types/auth";
+import type { Database } from "@/types/database";
+
+type DbSession = Database["public"]["Tables"]["sessions"]["Row"];
+type DbSessionInsert = Database["public"]["Tables"]["sessions"]["Insert"];
 
 // Create a new session
 export async function createSession(
@@ -20,7 +24,7 @@ export async function createSession(
   };
 
   // Map to snake_case for the database
-  const dbSessionData = {
+  const dbSessionData: DbSessionInsert = {
     id: sessionData.id,
     user_id: sessionData.userId,
     expires_at: sessionData.expiresAt,
@@ -36,30 +40,31 @@ export async function createSession(
   return sessionData;
 }
 
+// Helper function to convert database session to app session
+function mapDbSessionToSession(dbSession: DbSession): Session {
+  return {
+    id: dbSession.id,
+    userId: dbSession.user_id,
+    expiresAt: dbSession.expires_at,
+    createdAt: dbSession.created_at,
+  };
+}
+
 // Get a session by ID
 export async function getSession(sessionId: string): Promise<Session | null> {
-  const { data, error } = await supabase
+  const { data: dbSession, error } = await supabase
     .from("sessions")
-    .select("*")
+    .select()
     .eq("id", sessionId)
-    .single();
+    .returns<DbSession>()
+    .maybeSingle();
 
-  if (error) {
+  if (error || !dbSession) {
     console.error("Error fetching session:", error);
     return null;
   }
 
-  // Map from snake_case to camelCase
-  if (data) {
-    return {
-      id: data.id,
-      userId: data.user_id,
-      expiresAt: data.expires_at,
-      createdAt: data.created_at,
-    };
-  }
-
-  return null;
+  return mapDbSessionToSession(dbSession);
 }
 
 // Delete a session

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import type { ReactElement } from "react";
 import {
   Card,
   CardHeader,
@@ -9,6 +10,17 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  startRegistration,
+  type AuthenticationResponseJSON,
+  type PublicKeyCredentialCreationOptionsJSON,
+  type AuthenticatorTransport,
+  type AuthenticatorAttachment,
+  type UserVerificationRequirement,
+  type AttestationConveyancePreference,
+  startAuthentication,
+} from "@simplewebauthn/browser";
+import { getBrowserInfo, detectDeviceType } from "@/lib/auth/browser-detection";
 import { addRecentEmail, getRecentEmails } from "@/lib/recentEmails";
 import { PasskeyIndicator } from "../ui/PasskeyIndicator";
 import {
@@ -18,6 +30,7 @@ import {
 } from "@/lib/db/device-credentials";
 import { getUserWithCredentials, getUserByEmail } from "@/lib/db/users";
 import { PasskeyLoginButton } from "./PasskeyLoginButton";
+import { AccountSwitcher } from "./AccountSwitcher";
 import { AuthenticatedState } from "./AuthenticatedState";
 import { NewDeviceRegistration } from "./NewDeviceRegistration";
 import {
@@ -31,11 +44,7 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import {
-  startAuthentication,
-  startRegistration,
-} from "@simplewebauthn/browser";
-import { getBrowserInfo, detectDeviceType } from "@/lib/auth/browser-detection";
+import { apiRequest } from "@/lib/api/client-helpers";
 
 type AuthState =
   | "initial"
@@ -70,7 +79,7 @@ interface ErrorResponse {
   requestId?: string;
 }
 
-type ApiResponse = UserExistsResponse | ErrorResponse;
+type ApiResponse<T> = UserExistsResponse | ErrorResponse;
 
 type AuthenticatedUser = {
   userId: string;
@@ -103,7 +112,7 @@ type VerificationStatus = {
 
 interface AuthenticationState {
   challengeId: string;
-  options: Record<string, unknown>;
+  options: PublicKeyCredentialRequestOptionsJSON;
 }
 
 // User interface for selected user
@@ -114,20 +123,104 @@ interface SelectedUser {
   hasPasskeys?: boolean;
 }
 
+interface RegistrationOptions {
+  challengeId: string;
+  rp: {
+    name: string;
+    id: string;
+  };
+  user: {
+    id: string;
+    name: string;
+    displayName: string;
+  };
+  challenge: string;
+  pubKeyCredParams: Array<{
+    alg: number;
+    type: "public-key";
+  }>;
+  timeout?: number;
+  excludeCredentials?: Array<{
+    id: string;
+    type: "public-key";
+    transports?: AuthenticatorTransport[];
+  }>;
+  authenticatorSelection?: {
+    authenticatorAttachment?: AuthenticatorAttachment;
+    requireResidentKey?: boolean;
+    residentKey?: "discouraged" | "preferred" | "required";
+    userVerification?: UserVerificationRequirement;
+  };
+  attestation?: AttestationConveyancePreference;
+}
+
+interface VerificationResponse {
+  user: {
+    id: string;
+    email: string;
+    passkeyCount: number;
+    lastPasskeyAddedAt?: number;
+    deviceTypes?: string[];
+    credentialId?: string;
+  };
+}
+
+interface DevicePasskeysResponse {
+  hasPasskeysOnDevice: boolean;
+  credentialCount: number;
+  isServerSideCheck: boolean;
+}
+
+interface User {
+  id: string;
+  email: string;
+  displayName?: string;
+}
+
+// Define proper types to replace 'any'
+interface UserCredential {
+  id: string;
+  credentialId: string;
+  name?: string;
+  lastUsed?: string;
+}
+
+interface UserProfile {
+  id: string;
+  email: string;
+  displayName?: string;
+  passkeyCount: number;
+  lastPasskeyAddedAt?: string;
+  deviceTypes: string[];
+  credentials: UserCredential[];
+}
+
+interface VerifiedUser {
+  id: string;
+  email: string;
+  passkeyCount?: number;
+  deviceTypes?: string[];
+}
+
 export default function AuthContainer({
   defaultMode = "signin",
   onAuthSuccess,
-}: AuthContainerProps) {
+}: AuthContainerProps): ReactElement {
   // State variables
   const [mode, setMode] = useState<"signin" | "register">(defaultMode);
   const [email, setEmail] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authState, setAuthState] = useState<AuthState>("initial");
   const [authenticatedUser, setAuthenticatedUser] =
     useState<AuthenticatedUser | null>(null);
 
-  // Add state for new device registration
+  // Auth flow state
+  const [authFlow, setAuthFlow] = useState<
+    "default" | "newDevice" | "passwordFallback"
+  >("default");
+  const [selectedUser, setSelectedUser] = useState<SelectedUser | null>(null);
+
+  // State for new device registration
   const [showNewDeviceRegistration, setShowNewDeviceRegistration] =
     useState(false);
   const [userForNewDevice, setUserForNewDevice] = useState<{
@@ -135,13 +228,7 @@ export default function AuthContainer({
     email: string;
   } | null>(null);
 
-  // Add a new state for tracking the authentication flow
-  const [authFlow, setAuthFlow] = useState<
-    "default" | "newDevice" | "passwordFallback"
-  >("default");
-  const [selectedUser, setSelectedUser] = useState<SelectedUser | null>(null);
-
-  // Add a new state for tracking device recognition
+  // Add state for tracking device recognition
   const [deviceRecognized, setDeviceRecognized] = useState(false);
   const [deviceCredentials, setDeviceCredentials] = useState<string[]>([]);
   const [isCheckingDevice, setIsCheckingDevice] = useState(false);
@@ -192,59 +279,48 @@ export default function AuthContainer({
       }
     };
 
-    checkDeviceCredentials();
+    void checkDeviceCredentials();
   }, [email]);
 
-  // Add useEffect to initialize device check with most recent email
+  // Update the checkDeviceForRecentEmail function to handle Promise properly
   useEffect(() => {
-    // This effect only runs in the browser
     if (typeof window === "undefined") return;
 
-    // Check for recent emails on component mount
     const recentEmails = getRecentEmails();
     if (recentEmails.length > 0) {
       const mostRecentEmail = recentEmails[0]?.email || "";
 
-      // Only proceed if we have an email
       if (mostRecentEmail) {
         console.log("Auto-populating with recent email:", mostRecentEmail);
         setEmail(mostRecentEmail);
         form.setValue("email", mostRecentEmail);
 
-        // Check if this device is recognized for the most recent email
         const checkDeviceForRecentEmail = async () => {
           setIsCheckingDevice(true);
           try {
-            const response = await fetch("/api/auth/device-passkeys", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email: mostRecentEmail }),
-            });
-
-            if (response.ok) {
-              const data = await response.json();
-
-              // If it was a server-side check, we need to verify on client-side
-              if (data.isServerSideCheck) {
-                console.log(
-                  "Server-side check detected, performing client-side check"
-                );
-                // Directly check device credentials using the client-side functionality
-                const user = await getUserByEmail(mostRecentEmail);
-                if (user) {
-                  const credentialIds = await getCredentialsForCurrentDevice(
-                    user.id
-                  );
-                  setDeviceCredentials(credentialIds);
-                  setDeviceRecognized(credentialIds.length > 0);
-                }
-              } else {
-                console.log(
-                  "Device recognition check:",
-                  data.hasPasskeysOnDevice
-                );
-                setDeviceRecognized(data.hasPasskeysOnDevice);
+            const data = await apiRequest<DevicePasskeysResponse>(
+              "/api/auth/device-passkeys",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: mostRecentEmail }),
               }
+            );
+
+            if (data.isServerSideCheck) {
+              console.log(
+                "Server-side check detected, performing client-side check"
+              );
+              const user = await getUserByEmail(mostRecentEmail);
+              if (user) {
+                const credentialIds = await getCredentialsForCurrentDevice(
+                  user.id
+                );
+                setDeviceCredentials(credentialIds);
+                setDeviceRecognized(credentialIds.length > 0);
+              }
+            } else {
+              setDeviceRecognized(data.hasPasskeysOnDevice);
             }
           } catch (error) {
             console.error("Error checking device recognition:", error);
@@ -253,44 +329,35 @@ export default function AuthContainer({
           }
         };
 
-        checkDeviceForRecentEmail();
+        void checkDeviceForRecentEmail();
       }
     }
   }, [form]);
 
-  // Update the form submission handler
+  // Handle form submission
   const handleSubmit = form.handleSubmit(async (data) => {
-    setIsSubmitting(true);
     setError(null);
 
     try {
       const email = data.email;
-
-      // Get user and check if they exist
       const user = await getUserWithCredentials(email);
 
       if (!user) {
-        // User doesn't exist, continue with registration
         setAuthState("registering");
-        initiateRegistration(email);
+        void initiateRegistration(email);
       } else {
-        // User exists, check if they have passkeys on this device
         try {
-          const response = await fetch("/api/auth/device-passkeys", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email }),
-          });
-
-          if (!response.ok) {
-            throw new Error("Failed to check device passkeys");
-          }
-
-          const data = await response.json();
+          const data = await apiRequest<DevicePasskeysResponse>(
+            "/api/auth/device-passkeys",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email }),
+            }
+          );
 
           let hasPasskeysOnDevice = data.hasPasskeysOnDevice;
 
-          // If it was a server-side check, verify on client-side
           if (data.isServerSideCheck) {
             console.log(
               "Server-side check detected, performing client-side check"
@@ -301,16 +368,13 @@ export default function AuthContainer({
           }
 
           if (hasPasskeysOnDevice) {
-            // Device is recognized, show one-click login
             setDeviceRecognized(true);
           } else {
-            // Device is not recognized, show new device flow
             setSelectedUser(user);
             setAuthFlow("newDevice");
           }
         } catch (error) {
           console.error("Error checking device passkeys:", error);
-          // Fall back to new device flow on error
           setSelectedUser(user);
           setAuthFlow("newDevice");
         }
@@ -318,9 +382,7 @@ export default function AuthContainer({
     } catch (error) {
       console.error("Error during authentication:", error);
       setError("Failed to authenticate. Please try again.");
-      handleError();
-    } finally {
-      setIsSubmitting(false);
+      handleError(error);
     }
   });
 
@@ -330,9 +392,11 @@ export default function AuthContainer({
   };
 
   // Handle error
-  const handleError = () => {
+  const handleError = (error: unknown) => {
     setAuthState("error");
-    // ... rest of your error handling logic
+    setError(
+      error instanceof Error ? error.message : "An unknown error occurred"
+    );
   };
 
   // Render auth state content
@@ -343,7 +407,7 @@ export default function AuthContainer({
         <NewDeviceRegistration
           email={userForNewDevice.email}
           userId={userForNewDevice.userId}
-          onSuccess={(user) => {
+          onSuccess={(user: VerifiedUser) => {
             // Update authenticated user
             const authUser: AuthenticatedUser = {
               userId: user.id,
@@ -365,7 +429,7 @@ export default function AuthContainer({
             setUserForNewDevice(null);
           }}
           onError={(error) => {
-            handleError();
+            handleError(error);
             setShowNewDeviceRegistration(false);
             setUserForNewDevice(null);
           }}
@@ -416,9 +480,14 @@ export default function AuthContainer({
               </Form>
             )}
 
-            {/* Show passkey login button if device is recognized - similar to example screenshot */}
+            {/* Show passkey login button if device is recognized */}
             {deviceRecognized && !isCheckingDevice && (
               <div className="space-y-4">
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="text-muted-foreground">Signing in as:</span>
+                  <span className="font-medium">{email}</span>
+                </div>
+
                 <PasskeyLoginButton
                   email={email}
                   onSuccess={(user) => {
@@ -430,16 +499,25 @@ export default function AuthContainer({
                       passkeyCount:
                         typeof user.passkeyCount === "number"
                           ? user.passkeyCount
-                          : 1,
-                      lastPasskeyAddedAt: Date.now(),
+                          : deviceCredentials.length || 1,
+                      lastPasskeyAddedAt:
+                        typeof user.lastPasskeyAddedAt === "number"
+                          ? user.lastPasskeyAddedAt
+                          : Date.now(),
                       deviceTypes: Array.isArray(user.deviceTypes)
                         ? [...user.deviceTypes, detectDeviceType()]
                         : [detectDeviceType()],
                     };
 
                     // Update the usage timestamp of this credential
-                    if (user.credentialId) {
-                      updateDeviceCredentialUsage(user.id, user.credentialId);
+                    if (
+                      user.credentialId &&
+                      typeof user.credentialId === "string"
+                    ) {
+                      void updateDeviceCredentialUsage(
+                        user.id,
+                        user.credentialId
+                      );
                     }
 
                     setAuthenticatedUser(authUser);
@@ -453,18 +531,13 @@ export default function AuthContainer({
                   buttonStyle="simplified"
                 />
 
-                <div className="text-center mt-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setDeviceRecognized(false);
-                    }}
-                    className="text-sm"
-                  >
-                    Not you? Use a different account
-                  </Button>
-                </div>
+                <AccountSwitcher
+                  currentEmail={email}
+                  onSelect={(selectedEmail) => {
+                    setEmail(selectedEmail);
+                    form.setValue("email", selectedEmail);
+                  }}
+                />
               </div>
             )}
           </div>
@@ -494,77 +567,72 @@ export default function AuthContainer({
     );
   };
 
-  // Update the initiateRegistration function to store device credential
-  const initiateRegistration = async (email: string) => {
+  // Update the initiateRegistration function with proper types
+  const initiateRegistration = async (email: string): Promise<void> => {
     try {
-      // Set registering state immediately to show full context UI
       setAuthState("registering");
 
-      // Get registration options
-      const response = await fetch("/api/auth/register/options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          displayName: email,
-        }),
+      const optionsData = await apiRequest<RegistrationOptions>(
+        "/api/auth/register/options",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            displayName: email,
+          }),
+        }
+      );
+
+      const { challengeId, ...webAuthnOptions } = optionsData;
+
+      const authResponse = await startRegistration({
+        optionsJSON: webAuthnOptions,
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to get registration options");
-      }
+      const verifyData = await apiRequest<VerificationResponse>(
+        "/api/auth/register/verify",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            credential: authResponse,
+            challengeId,
+            deviceType: detectDeviceType(),
+            browserInfo: getBrowserInfo(),
+          }),
+        }
+      );
 
-      const optionsData = await response.json();
+      if (verifyData.user) {
+        await storeDeviceCredential(verifyData.user.id, authResponse.id);
 
-      // Extract challengeId and use the rest as options
-      const { challengeId, ...options } = optionsData;
-
-      // Start registration with the correct options structure
-      const authResponse = await startRegistration(options);
-
-      // Verify registration
-      const verifyResponse = await fetch("/api/auth/register/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          credential: authResponse,
-          challengeId: challengeId,
-        }),
-      });
-
-      if (!verifyResponse.ok) {
-        throw new Error("Registration verification failed");
-      }
-
-      const data = await verifyResponse.json();
-
-      // Store the credential-device association
-      if (data.user) {
-        await storeDeviceCredential(data.user.id, authResponse.id);
-
-        // Continue with existing code...
         const authUser: AuthenticatedUser = {
-          userId: data.user.id,
-          email: data.user.email,
+          userId: verifyData.user.id,
+          email: verifyData.user.email,
           hasPasskey: true,
-          passkeyCount:
-            typeof data.user.passkeyCount === "number"
-              ? data.user.passkeyCount
-              : 1,
+          passkeyCount: verifyData.user.passkeyCount ?? 1,
           lastPasskeyAddedAt: Date.now(),
-          deviceTypes: Array.isArray(data.user.deviceTypes)
-            ? [...data.user.deviceTypes, detectDeviceType()]
+          deviceTypes: Array.isArray(verifyData.user.deviceTypes)
+            ? [...verifyData.user.deviceTypes, detectDeviceType()]
             : [detectDeviceType()],
         };
 
+        if (verifyData.user.credentialId) {
+          void updateDeviceCredentialUsage(
+            verifyData.user.id,
+            verifyData.user.credentialId
+          );
+        }
+
         setAuthenticatedUser(authUser);
         onAuthSuccess?.(authUser);
-        addRecentEmail(email);
+        addRecentEmail(verifyData.user.email);
         setAuthState("authenticated");
       }
     } catch (error) {
       console.error("Registration failed:", error);
-      handleError();
+      handleError(error);
     }
   };
 

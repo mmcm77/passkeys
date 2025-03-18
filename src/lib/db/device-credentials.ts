@@ -3,6 +3,29 @@ import { getDeviceFingerprint } from "@/lib/auth/device-utils";
 import { getBrowserInfo } from "@/lib/auth/browser-detection";
 import { detectDeviceType } from "@/lib/auth/device-utils";
 import type { DeviceCredential } from "@/types/auth";
+import type { Database } from "@/types/database";
+
+type DbDeviceCredential =
+  Database["public"]["Tables"]["device_credentials"]["Row"];
+type DbDeviceCredentialInsert =
+  Database["public"]["Tables"]["device_credentials"]["Insert"];
+type DbDeviceCredentialUpdate =
+  Database["public"]["Tables"]["device_credentials"]["Update"];
+
+interface DeviceDetails {
+  deviceType?: string;
+  deviceName?: string;
+  browser?: string;
+  os?: string;
+  userAgent?: string;
+  [key: string]: unknown;
+}
+
+// Add type for fingerprint response
+interface DeviceFingerprintResponse {
+  fingerprint: string;
+  components: Record<string, unknown>;
+}
 
 // Store a device fingerprint associated with a user and credential
 export async function storeDeviceCredential(
@@ -20,7 +43,8 @@ export async function storeDeviceCredential(
       .from("device_credentials")
       .select("id, credential_id")
       .eq("user_id", userId)
-      .eq("credential_id", credentialId);
+      .eq("credential_id", credentialId)
+      .returns<Pick<DbDeviceCredential, "id" | "credential_id">[]>();
 
     if (checkError) {
       console.error("Error checking for existing credential:", checkError);
@@ -33,37 +57,40 @@ export async function storeDeviceCredential(
       );
 
       // Get device fingerprint and components for the update
-      const { fingerprint, components } = await getDeviceFingerprint();
+      const fingerprintResponse =
+        (await getDeviceFingerprint()) as DeviceFingerprintResponse;
       const browserInfo = getBrowserInfo();
-      const browserSpecificFingerprint = `${fingerprint}-${browserInfo.browser}`;
+      const currentBrowserFingerprint = `${fingerprintResponse.fingerprint}-${browserInfo.browser}`;
 
       // Generate a readable device name if not provided
       const generatedDeviceName =
         deviceName || `${browserInfo.os} ${browserInfo.browser}`;
 
       // Update the existing credential
-      // We're certain that existingCredentials has at least one element and existingCredentials[0] exists
-      // because we checked length > 0 above
       const existingCredentialId = existingCredentials[0]?.id;
 
       if (!existingCredentialId) {
         throw new Error("Credential ID is undefined");
       }
 
+      const deviceDetails: DeviceDetails = {
+        browser: browserInfo.browser,
+        version: browserInfo.version,
+        os: browserInfo.os,
+        deviceType: detectDeviceType(),
+        deviceName: generatedDeviceName,
+        ...fingerprintResponse.components,
+      };
+
+      const updateData: DbDeviceCredentialUpdate = {
+        device_fingerprint: currentBrowserFingerprint,
+        device_details: deviceDetails,
+        last_used_at: Date.now(),
+      };
+
       const { error: updateError } = await supabase
         .from("device_credentials")
-        .update({
-          device_fingerprint: browserSpecificFingerprint,
-          device_name: generatedDeviceName,
-          device_details: {
-            browser: browserInfo.browser,
-            version: browserInfo.version,
-            os: browserInfo.os,
-            deviceType: detectDeviceType(),
-            ...components,
-          },
-          last_used_at: Date.now(),
-        })
+        .update(updateData)
         .eq("id", existingCredentialId);
 
       if (updateError) {
@@ -80,11 +107,12 @@ export async function storeDeviceCredential(
     // If we reach here, this is a new credential
 
     // Get device fingerprint and components
-    const { fingerprint, components } = await getDeviceFingerprint();
+    const fingerprintResponse =
+      (await getDeviceFingerprint()) as DeviceFingerprintResponse;
 
     // Browser-specific fingerprint to ensure each browser is treated as a separate device
     const browserInfo = getBrowserInfo();
-    const browserSpecificFingerprint = `${fingerprint}-${browserInfo.browser}`;
+    const currentBrowserFingerprint = `${fingerprintResponse.fingerprint}-${browserInfo.browser}`;
 
     // Generate a readable device name if not provided
     const generatedDeviceName =
@@ -96,19 +124,21 @@ export async function storeDeviceCredential(
     console.log(`Browser: ${browserInfo.browser} ${browserInfo.version}`);
     console.log(`Device name: ${generatedDeviceName}`);
 
-    const deviceCredential = {
-      id: crypto.randomUUID(), // Generate a UUID for the id column
+    const deviceDetails: DeviceDetails = {
+      browser: browserInfo.browser,
+      version: browserInfo.version,
+      os: browserInfo.os,
+      deviceType: detectDeviceType(),
+      deviceName: generatedDeviceName,
+      ...fingerprintResponse.components,
+    };
+
+    const deviceCredential: DbDeviceCredentialInsert = {
+      id: crypto.randomUUID(),
       user_id: userId,
       credential_id: credentialId,
-      device_fingerprint: browserSpecificFingerprint,
-      device_name: generatedDeviceName, // Use the dedicated column now
-      device_details: {
-        browser: browserInfo.browser,
-        version: browserInfo.version,
-        os: browserInfo.os,
-        deviceType: detectDeviceType(),
-        ...components,
-      },
+      device_fingerprint: currentBrowserFingerprint,
+      device_details: deviceDetails,
       created_at: Date.now(),
       last_used_at: Date.now(),
     };
@@ -137,13 +167,23 @@ export async function getCredentialsForCurrentDevice(
   console.log("Getting credentials for device - UserId:", userId);
 
   try {
+    // Check if we're in a browser environment
+    const isBrowser =
+      typeof window !== "undefined" && typeof navigator !== "undefined";
+
+    if (!isBrowser) {
+      console.log("Running on server-side, cannot check browser fingerprint");
+      return [];
+    }
+
     // Get device fingerprint for the current browser
-    const { fingerprint } = await getDeviceFingerprint();
+    const fingerprintResponse =
+      (await getDeviceFingerprint()) as DeviceFingerprintResponse;
     const browserInfo = getBrowserInfo();
-    const browserSpecificFingerprint = `${fingerprint}-${browserInfo.browser}`;
+    const currentBrowserFingerprint = `${fingerprintResponse.fingerprint}-${browserInfo.browser}`;
 
     console.log(
-      `Checking for device fingerprint: ${browserSpecificFingerprint.substring(
+      `Checking for device fingerprint: ${currentBrowserFingerprint.substring(
         0,
         8
       )}...`
@@ -153,7 +193,8 @@ export async function getCredentialsForCurrentDevice(
       .from("device_credentials")
       .select("credential_id")
       .eq("user_id", userId)
-      .eq("device_fingerprint", browserSpecificFingerprint);
+      .eq("device_fingerprint", currentBrowserFingerprint)
+      .returns<Pick<DbDeviceCredential, "credential_id">[]>();
 
     if (error) {
       console.error("Error getting credentials for device:", error);
@@ -180,7 +221,8 @@ export async function getCredentialsForUser(
     .from("device_credentials")
     .select("*")
     .eq("user_id", userId)
-    .order("last_used_at", { ascending: false });
+    .order("last_used_at", { ascending: false })
+    .returns<DbDeviceCredential[]>();
 
   if (error) {
     console.error("Error getting credentials for user:", error);
@@ -193,10 +235,11 @@ export async function getCredentialsForUser(
   if (data.length > 0) {
     console.log("Device credentials raw data:");
     data.forEach((cred, index) => {
+      const details = cred.device_details as DeviceDetails;
       console.log(`Credential ${index + 1}:`, {
         id: cred.id,
         credential_id: cred.credential_id,
-        device_name: cred.device_name,
+        device_name: details?.deviceName || "Unknown",
         device_fingerprint: cred.device_fingerprint
           ? cred.device_fingerprint.substring(0, 8) + "..."
           : "none",
@@ -206,27 +249,29 @@ export async function getCredentialsForUser(
   }
 
   // Check if current device matches any of the credentials
-  const { fingerprint } = await getDeviceFingerprint();
+  const fingerprintResponse =
+    (await getDeviceFingerprint()) as DeviceFingerprintResponse;
   const browserInfo = getBrowserInfo();
-  const browserSpecificFingerprint = `${fingerprint}-${browserInfo.browser}`;
+  const currentBrowserFingerprint = `${fingerprintResponse.fingerprint}-${browserInfo.browser}`;
 
   // Transform the data into DeviceCredential objects
-  const deviceCredentials = data.map((record) => ({
-    credentialId: record.credential_id,
-    userId: record.user_id,
-    deviceType: record.device_details?.deviceType || "unknown",
-    deviceName:
-      record.device_name ||
-      `${record.device_details?.os || "Unknown"} ${
-        record.device_details?.browser || "Device"
-      }`,
-    browser: record.device_details?.browser || "unknown",
-    os: record.device_details?.os || "unknown",
-    userAgent: record.device_details?.userAgent || "",
-    createdAt: record.created_at,
-    lastUsedAt: record.last_used_at,
-    isCurrentDevice: record.device_fingerprint === browserSpecificFingerprint,
-  }));
+  const deviceCredentials = data.map((record): DeviceCredential => {
+    const details = record.device_details as DeviceDetails;
+    return {
+      credentialId: record.credential_id,
+      userId: record.user_id,
+      deviceType: details?.deviceType || "unknown",
+      deviceName:
+        details?.deviceName ||
+        `${details?.os || "Unknown"} ${details?.browser || "Device"}`,
+      browser: details?.browser || "unknown",
+      os: details?.os || "unknown",
+      userAgent: details?.userAgent || "",
+      createdAt: record.created_at,
+      lastUsedAt: record.last_used_at,
+      isCurrentDevice: record.device_fingerprint === currentBrowserFingerprint,
+    };
+  });
 
   console.log(
     `Returning ${deviceCredentials.length} mapped device credentials`
@@ -255,10 +300,6 @@ export async function updateDeviceCredentialUsage(
 ): Promise<boolean> {
   try {
     console.log(`Updating usage for credential: ${credentialId}`);
-
-    const { fingerprint } = await getDeviceFingerprint();
-    const browserInfo = getBrowserInfo();
-    const browserSpecificFingerprint = `${fingerprint}-${browserInfo.browser}`;
 
     const { error } = await supabase
       .from("device_credentials")
@@ -341,40 +382,42 @@ export async function updateOrCreateDeviceCredential(
   }
 }
 
-/**
- * Gets a specific device credential by ID
- */
+// Get a specific device credential
 export async function getDeviceCredential(
   userId: string,
   credentialId: string
-): Promise<any | null> {
-  try {
-    console.log(
-      `Getting device credential: user=${userId}, credential=${credentialId}`
-    );
+): Promise<DeviceCredential | null> {
+  const { data, error } = await supabase
+    .from("device_credentials")
+    .select()
+    .eq("user_id", userId)
+    .eq("credential_id", credentialId)
+    .returns<DbDeviceCredential[]>()
+    .maybeSingle();
 
-    // Use Supabase to query for the credential
-    const { data, error } = await supabase
-      .from("device_credentials")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("credential_id", credentialId)
-      .single();
-
-    if (error) {
-      console.error("Error fetching device credential:", error);
-      return null;
-    }
-
-    if (!data) {
-      console.log("No matching credential found");
-      return null;
-    }
-
-    console.log("Found credential: ", data.id);
-    return data;
-  } catch (error) {
-    console.error("Error fetching device credential:", error);
+  if (error || !data) {
+    console.error("Error getting device credential:", error);
     return null;
   }
+
+  const fingerprintResponse =
+    (await getDeviceFingerprint()) as DeviceFingerprintResponse;
+  const browserInfo = getBrowserInfo();
+  const browserSpecificFingerprint = `${fingerprintResponse.fingerprint}-${browserInfo.browser}`;
+
+  const details = data.device_details as DeviceDetails;
+  return {
+    credentialId: data.credential_id,
+    userId: data.user_id,
+    deviceType: details?.deviceType || "unknown",
+    deviceName:
+      details?.deviceName ||
+      `${details?.os || "Unknown"} ${details?.browser || "Device"}`,
+    browser: details?.browser || "unknown",
+    os: details?.os || "unknown",
+    userAgent: details?.userAgent || "",
+    createdAt: data.created_at,
+    lastUsedAt: data.last_used_at,
+    isCurrentDevice: data.device_fingerprint === browserSpecificFingerprint,
+  };
 }

@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import supabase from "@/lib/supabase";
+import { apiRequest } from "@/lib/api/client-helpers";
+import type { ReactNode } from "react";
 
-export default function AuthStatus() {
+export default function AuthStatus(): ReactNode {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<{ email: string } | null>(null);
@@ -13,9 +14,11 @@ export default function AuthStatus() {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        // Check if we have a session cookie
-        const response = await fetch("/api/auth/check-session");
-        const data = await response.json();
+        // Check if we have a session cookie using our new utility
+        const data = await apiRequest<{
+          authenticated: boolean;
+          user: { email: string } | null;
+        }>("/api/auth/check-session");
 
         setIsAuthenticated(data.authenticated);
         setUser(data.user);
@@ -28,12 +31,16 @@ export default function AuthStatus() {
       }
     };
 
-    checkSession();
+    void checkSession();
   }, []);
 
   const handleLogout = async () => {
-    await fetch("/api/auth/logout");
-    router.push("/");
+    try {
+      await apiRequest("/api/auth/logout", { method: "POST" });
+      router.push("/");
+    } catch (error) {
+      console.error("Error during logout:", error);
+    }
   };
 
   if (isLoading) {

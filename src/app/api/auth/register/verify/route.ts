@@ -9,14 +9,45 @@ import {
   getDeviceCredential,
 } from "@/lib/db/device-credentials";
 import { getBrowserInfo, detectDeviceType } from "@/lib/auth/browser-detection";
+import type { DeviceInfo } from "@/types/auth";
+import type { AuthenticatorTransport } from "@simplewebauthn/browser";
+
+interface VerifyResponse {
+  registered: boolean;
+  user: {
+    id: string;
+    email: string;
+    displayName: string | undefined;
+  };
+}
+
+interface CredentialRequest {
+  id: string;
+  rawId: string;
+  response: {
+    clientDataJSON: string;
+    attestationObject: string;
+  };
+  transports?: AuthenticatorTransport[];
+  clientExtensionResults: Record<string, unknown>;
+  type: "public-key";
+}
+
+interface VerifyRequestBody {
+  credential: CredentialRequest;
+  challengeId: string;
+  browserInfo?: {
+    browser?: string;
+    os?: string;
+    deviceType?: string;
+  };
+}
 
 // Helper function to get device info from request
-function getDeviceInfo(request: NextRequest) {
+function getDeviceInfo(request: NextRequest): DeviceInfo {
   const userAgent = request.headers.get("user-agent") || "";
 
-  // This is a very basic implementation
-  // In a production app, you might want to use a proper user-agent parser
-  return {
+  const deviceInfo: DeviceInfo = {
     browserFamily: userAgent.includes("Chrome")
       ? "Chrome"
       : userAgent.includes("Firefox")
@@ -39,17 +70,22 @@ function getDeviceInfo(request: NextRequest) {
     isTablet: userAgent.includes("Tablet"),
     isDesktop: !userAgent.includes("Mobile") && !userAgent.includes("Tablet"),
   };
+
+  return deviceInfo;
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(
+  request: NextRequest
+): Promise<NextResponse<VerifyResponse | { error: string }>> {
   try {
-    const { credential, challengeId, browserInfo } = await request.json();
+    const body = (await request.json()) as VerifyRequestBody;
+    const { credential, challengeId, browserInfo } = body;
 
     // Verify challenge
     const challengeResult = await verifyChallenge(challengeId, "registration");
     if (!challengeResult.valid) {
       return NextResponse.json(
-        { error: challengeResult.error },
+        { error: challengeResult.error || "Invalid challenge" },
         { status: 400 }
       );
     }
@@ -106,36 +142,12 @@ export async function POST(request: NextRequest) {
       credentialBackedUp,
     } = registrationInfo;
 
-    // Log detailed information about the credential for debugging
-    console.log("=== REGISTRATION DATA ===");
-    console.log("Credential ID:", verifiedCredential.id);
-    console.log("Public Key Type:", typeof verifiedCredential.publicKey);
-    console.log("Is buffer?", Buffer.isBuffer(verifiedCredential.publicKey));
-    console.log("Public Key Length:", verifiedCredential.publicKey.length);
-
-    // Check if publicKey exists and has at least one element
-    if (
-      verifiedCredential.publicKey &&
-      verifiedCredential.publicKey.length > 0
-    ) {
-      // We can safely use non-null assertion since we've verified length > 0
-      const firstByte = verifiedCredential.publicKey[0]!;
-      console.log("First byte value:", firstByte.toString(16));
-    } else {
-      console.warn(
-        "Public key is empty or doesn't have the expected structure"
-      );
-    }
-
     // Convert the public key to base64url format for storage
     const publicKeyBase64 = isoBase64URL.fromBuffer(
       verifiedCredential.publicKey
     );
-    console.log("Public Key (base64url):", publicKeyBase64);
-    console.log("========================");
 
     // First, check if this credential is already registered as a device credential
-    // to avoid duplicate registrations
     const existingDeviceCredential = await getDeviceCredential(
       userId,
       verifiedCredential.id
@@ -154,9 +166,7 @@ export async function POST(request: NextRequest) {
       counter: verifiedCredential.counter,
       deviceType: credentialDeviceType,
       backedUp: credentialBackedUp,
-      transports: Array.isArray(credential.transports)
-        ? credential.transports
-        : [],
+      transports: credential.transports || [],
       deviceInfo: getDeviceInfo(request),
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
@@ -164,49 +174,13 @@ export async function POST(request: NextRequest) {
 
     // Store or update device credential for device recognition
     try {
-      console.log("Storing device credential for device recognition");
-
       // Use provided browserInfo or detect from request
       const detectedBrowserInfo = browserInfo || getBrowserInfo();
 
       // Make sure we have browser and OS information
-      let browser = detectedBrowserInfo?.browser;
-      let os = detectedBrowserInfo?.os;
-      const deviceType = detectedBrowserInfo?.deviceType || detectDeviceType();
-
-      // If browser detection failed, try to detect from user agent
-      if (!browser || browser === "Unknown") {
-        const userAgent = request.headers.get("user-agent") || "";
-        console.log(`Detecting browser from user agent: ${userAgent}`);
-
-        // Attempt to detect browser
-        if (userAgent.includes("Chrome")) {
-          browser = "Chrome";
-        } else if (userAgent.includes("Safari")) {
-          browser = "Safari";
-        } else if (userAgent.includes("Firefox")) {
-          browser = "Firefox";
-        } else if (userAgent.includes("Edge")) {
-          browser = "Edge";
-        }
-
-        // Attempt to detect OS
-        if (userAgent.includes("Windows")) {
-          os = "Windows";
-        } else if (userAgent.includes("Mac")) {
-          os = "macOS";
-        } else if (userAgent.includes("iPhone") || userAgent.includes("iPad")) {
-          os = "iOS";
-        } else if (userAgent.includes("Android")) {
-          os = "Android";
-        } else if (userAgent.includes("Linux")) {
-          os = "Linux";
-        }
-      }
-
-      // Ensure we have some values
-      browser = browser || "Unknown Browser";
-      os = os || "Unknown OS";
+      const browser = detectedBrowserInfo?.browser || "Unknown Browser";
+      const os = detectedBrowserInfo?.os || "Unknown OS";
+      const deviceType = detectDeviceType();
 
       // Generate a readable device name based on OS and browser
       const deviceName = `${os} ${browser}`;

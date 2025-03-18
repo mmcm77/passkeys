@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { getWebAuthnCapabilities } from "@/lib/auth/browser-detection";
 import { cn } from "@/lib/utils";
 import { isPasskeySupported } from "@/lib/auth/passkeys";
+import type { FC } from "react";
 
 type PasskeyStatus =
   | "available"
@@ -17,14 +18,14 @@ interface PasskeyIndicatorProps {
   hasDeviceCredentials?: boolean;
 }
 
-export function PasskeyIndicator({
+export const PasskeyIndicator: FC<PasskeyIndicatorProps> = ({
   className,
   hasDeviceCredentials,
-}: PasskeyIndicatorProps) {
+}) => {
   const [status, setStatus] = useState<PasskeyStatus>("loading");
 
   useEffect(() => {
-    const checkCapabilities = async () => {
+    const checkCapabilities = async (): Promise<void> => {
       try {
         // If device is recognized, show that status
         if (hasDeviceCredentials) {
@@ -90,7 +91,8 @@ export function PasskeyIndicator({
       }
     };
 
-    checkCapabilities();
+    // Void the promise to satisfy the no-floating-promises rule
+    void checkCapabilities();
   }, [hasDeviceCredentials]);
 
   return (
@@ -124,4 +126,4 @@ export function PasskeyIndicator({
       </span>
     </div>
   );
-}
+};

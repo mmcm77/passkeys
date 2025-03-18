@@ -1,7 +1,4 @@
-import {
-  browserSupportsWebAuthn,
-  platformAuthenticatorIsAvailable,
-} from "@simplewebauthn/browser";
+import { platformAuthenticatorIsAvailable } from "@simplewebauthn/browser";
 
 /**
  * Utils for detecting browser capabilities for WebAuthn
@@ -14,6 +11,10 @@ export interface BrowserInfo {
   mobile: boolean;
   isWebAuthnSupported: boolean;
   isSecureContext: boolean;
+}
+
+interface ConditionalMediationCredential {
+  isConditionalMediationAvailable: () => Promise<boolean>;
 }
 
 /**
@@ -118,11 +119,19 @@ export function detectDeviceType(): "mobile" | "tablet" | "desktop" {
   return "desktop";
 }
 
+interface WebAuthnCapabilities {
+  isAvailable: boolean;
+  hasConditionalMediation: boolean;
+  hasPlatformAuthenticator: boolean;
+  browserInfo: BrowserInfo;
+  recommendedAction?: string;
+}
+
 /**
  * Gets basic WebAuthn capabilities for the current browser
  * A synchronous version that doesn't perform any async checks
  */
-export function getBasicWebAuthnCapabilities() {
+export function getBasicWebAuthnCapabilities(): WebAuthnCapabilities {
   const browserInfo = getBrowserInfo();
   const isAvailable =
     typeof window !== "undefined" && "PublicKeyCredential" in window;
@@ -132,8 +141,9 @@ export function getBasicWebAuthnCapabilities() {
     isAvailable &&
     typeof window !== "undefined" &&
     "PublicKeyCredential" in window &&
-    "conditional" in (window.PublicKeyCredential as any) &&
-    "mediation" in (window.PublicKeyCredential as any).conditional;
+    typeof (
+      window.PublicKeyCredential as unknown as ConditionalMediationCredential
+    ).isConditionalMediationAvailable === "function";
 
   // Check for platform authenticator
   const hasPlatformAuthenticator =
@@ -144,7 +154,7 @@ export function getBasicWebAuthnCapabilities() {
       window.PublicKeyCredential;
 
   // Determine recommended action based on capabilities
-  let recommendedAction;
+  let recommendedAction: string | undefined;
 
   // Safari on iOS and macOS handles passkeys best
   if (
@@ -181,11 +191,13 @@ export async function supportsConditionalMediation(): Promise<boolean> {
     if (
       typeof window !== "undefined" &&
       window.PublicKeyCredential &&
-      // @ts-ignore - Type 'PublicKeyCredential' has no index signature
-      PublicKeyCredential.isConditionalMediationAvailable
+      typeof (
+        window.PublicKeyCredential as unknown as ConditionalMediationCredential
+      ).isConditionalMediationAvailable === "function"
     ) {
-      // @ts-ignore - Method may not exist in all browsers
-      return await PublicKeyCredential.isConditionalMediationAvailable();
+      return await (
+        window.PublicKeyCredential as unknown as ConditionalMediationCredential
+      ).isConditionalMediationAvailable();
     }
     return false;
   } catch {
@@ -211,13 +223,7 @@ export async function hasPlatformAuthenticator(): Promise<boolean> {
 /**
  * Comprehensive check for WebAuthn support and capabilities
  */
-export async function getWebAuthnCapabilities(): Promise<{
-  isAvailable: boolean;
-  hasConditionalMediation: boolean;
-  hasPlatformAuthenticator: boolean;
-  browserInfo: ReturnType<typeof getBrowserInfo>;
-  recommendedAction?: string;
-}> {
+export async function getWebAuthnCapabilities(): Promise<WebAuthnCapabilities> {
   const browserInfo = getBrowserInfo();
   const [conditionalMediation, platformAuth] = await Promise.all([
     supportsConditionalMediation(),
@@ -244,27 +250,29 @@ export async function getWebAuthnCapabilities(): Promise<{
   };
 }
 
+interface OptimalEnvironmentResult {
+  isOptimal: boolean;
+  missingFeatures: string[];
+}
+
 /**
  * Checks if the current browser environment is optimal for WebAuthn
  */
-export async function isOptimalWebAuthnEnvironment(): Promise<{
-  isOptimal: boolean;
-  missingFeatures: string[];
-}> {
+export async function isOptimalWebAuthnEnvironment(): Promise<OptimalEnvironmentResult> {
   const capabilities = await getWebAuthnCapabilities();
   const missingFeatures: string[] = [];
 
   if (!capabilities.isAvailable) {
-    missingFeatures.push("WebAuthn Support");
+    missingFeatures.push("WebAuthn API not available");
   }
   if (!capabilities.browserInfo.isSecureContext) {
-    missingFeatures.push("Secure Context (HTTPS)");
+    missingFeatures.push("Not in a secure context (HTTPS)");
   }
   if (!capabilities.hasPlatformAuthenticator) {
-    missingFeatures.push("Platform Authenticator");
+    missingFeatures.push("No platform authenticator available");
   }
   if (!capabilities.hasConditionalMediation) {
-    missingFeatures.push("Conditional Mediation");
+    missingFeatures.push("No conditional mediation support");
   }
 
   return {

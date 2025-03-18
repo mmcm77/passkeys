@@ -1,32 +1,57 @@
-import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { getCredentialsByUserId } from "@/lib/db/credentials";
+import { logger } from "@/lib/api/logger";
 
-export async function GET() {
+// Create a scoped logger for this route
+const credentialsLogger = logger.scope("CredentialsAPI");
+
+interface Credential {
+  id: string;
+  name: string;
+  type: string;
+  lastUsed: string;
+}
+
+interface CredentialsResponse {
+  credentials: Credential[];
+  error?: string;
+}
+
+export async function GET(
+  request: Request
+): Promise<NextResponse<CredentialsResponse>> {
   try {
-    // Get session from cookie
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get("session");
+    const { searchParams } = new URL(request.url);
+    const userId = searchParams.get("userId");
 
-    if (!sessionCookie?.value) {
-      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    if (!userId) {
+      return NextResponse.json(
+        { credentials: [], error: "User ID is required" },
+        { status: 400 }
+      );
     }
 
-    // Get session
-    const session = await getSession(sessionCookie.value);
-    if (!session) {
-      return NextResponse.json({ error: "Invalid session" }, { status: 401 });
-    }
+    // Get credentials from your database
+    const dbCredentials = await getCredentialsByUserId(userId);
 
-    // Get credentials for user
-    const credentials = await getCredentialsByUserId(session.userId);
+    // Map to expected response format
+    const credentials: Credential[] = dbCredentials.map((cred) => ({
+      id: cred.credentialId,
+      name: cred.name || `Device ${cred.credentialId.slice(0, 6)}`,
+      type: cred.deviceInfo?.isMobile
+        ? "mobile"
+        : cred.deviceInfo?.isTablet
+        ? "tablet"
+        : "desktop",
+      lastUsed: new Date(cred.lastUsedAt).toISOString(),
+    }));
 
     return NextResponse.json({ credentials });
   } catch (error) {
     console.error("Error fetching credentials:", error);
     return NextResponse.json(
-      { error: "Failed to fetch credentials" },
+      { credentials: [], error: "Failed to fetch credentials" },
       { status: 500 }
     );
   }

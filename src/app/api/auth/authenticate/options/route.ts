@@ -6,17 +6,46 @@ import {
   getCredentialsByEmail,
 } from "@/lib/db/credentials";
 import { storeChallenge } from "@/lib/auth/challenge-manager";
-import { AuthenticatorTransportFuture } from "@simplewebauthn/server";
+import { type PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/server";
+import { AuthenticatorTransportFuture } from "@/types/webauthn";
+import { logger } from "@/lib/api/logger";
 
-export async function POST(request: NextRequest) {
+// Create a scoped logger for this route
+const authLogger = logger.scope("AuthOptions");
+
+interface RequestData {
+  email?: string;
+  credentialId?: string;
+}
+
+interface PasskeyOption {
+  id: string;
+  username: string;
+  displayName: string;
+}
+
+interface AuthenticationOptionsResponse {
+  options: PublicKeyCredentialRequestOptionsJSON;
+  challengeId: string;
+  passkeyOptions?: PasskeyOption[];
+}
+
+interface AllowCredential {
+  id: string;
+  transports?: AuthenticatorTransportFuture[];
+}
+
+export async function POST(
+  request: NextRequest
+): Promise<NextResponse<AuthenticationOptionsResponse | { error: string }>> {
   try {
-    console.log("Authentication options request received");
-    const { email, credentialId } = await request.json();
-    console.log("Request data:", { email, credentialId });
+    authLogger.log("Authentication options request received");
+    const { email, credentialId } = (await request.json()) as RequestData;
+    authLogger.debug("Request data:", { email, credentialId });
 
     // For conditional UI / browser autofill, we might not have an email yet
     if (!email && !credentialId) {
-      console.log(
+      authLogger.log(
         "No email or credentialId provided, generating generic options"
       );
       // Generate authentication options without specifying credentials
@@ -38,10 +67,11 @@ export async function POST(request: NextRequest) {
 
     // If a specific credential ID is provided, use it for authentication
     if (credentialId) {
-      console.log("Using specific credential ID:", credentialId);
-      const options = await generateWebAuthnAuthenticationOptions([
-        { id: credentialId },
-      ]);
+      authLogger.log("Using specific credential ID:", credentialId);
+      const allowCredentials: AllowCredential[] = [{ id: credentialId }];
+      const options = await generateWebAuthnAuthenticationOptions(
+        allowCredentials
+      );
 
       // Store challenge with minimal data
       const challengeId = await storeChallenge(
@@ -57,17 +87,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Get user
-    console.log("Looking up user by email:", email);
-    const user = await getUserByEmail(email);
-    console.log("User lookup result:", user ? "User found" : "User not found");
+    authLogger.log("Looking up user by email:", email);
+    const user = await getUserByEmail(email!);
+    authLogger.debug(
+      "User lookup result:",
+      user ? "User found" : "User not found"
+    );
 
     if (!user) {
       // If no user found, check for credentials by email
-      console.log("No user found, checking for credentials by email");
-      const credentials = await getCredentialsByEmail(email);
-      console.log("Credentials found:", credentials.length);
+      authLogger.log("No user found, checking for credentials by email");
+      const credentials = await getCredentialsByEmail(email!);
+      authLogger.debug("Credentials found:", credentials.length);
 
-      const allowCredentials = credentials.map((cred) => ({
+      const allowCredentials: AllowCredential[] = credentials.map((cred) => ({
         id: cred.credentialId,
         transports: cred.transports as AuthenticatorTransportFuture[],
       }));
@@ -84,13 +117,13 @@ export async function POST(request: NextRequest) {
         { email }
       );
 
-      const passkeyOptions = credentials.map((cred) => ({
+      const passkeyOptions: PasskeyOption[] = credentials.map((cred) => ({
         id: cred.credentialId,
-        username: email,
+        username: email!,
         displayName: cred.name || `Device (${cred.deviceType || "Unknown"})`,
       }));
 
-      console.log("Returning passkey options:", passkeyOptions);
+      authLogger.debug("Returning passkey options:", passkeyOptions);
 
       return NextResponse.json({
         options,
@@ -100,12 +133,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Get user's credentials
-    console.log("Getting credentials for user:", user.id);
+    authLogger.log("Getting credentials for user:", user.id);
     const credentials = await getCredentialsByUserId(user.id);
-    console.log("User credentials found:", credentials.length);
+    authLogger.debug("User credentials found:", credentials.length);
 
     // Format credentials for WebAuthn
-    const allowCredentials = credentials.map((cred) => ({
+    const allowCredentials: AllowCredential[] = credentials.map((cred) => ({
       id: cred.credentialId,
       transports: cred.transports as AuthenticatorTransportFuture[],
     }));
@@ -125,13 +158,13 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    const passkeyOptions = credentials.map((cred) => ({
+    const passkeyOptions: PasskeyOption[] = credentials.map((cred) => ({
       id: cred.credentialId,
       username: user.email,
       displayName: cred.name || `Device (${cred.deviceType || "Unknown"})`,
     }));
 
-    console.log("Returning passkey options for user:", passkeyOptions);
+    authLogger.debug("Returning passkey options for user:", passkeyOptions);
 
     return NextResponse.json({
       options,
@@ -139,9 +172,9 @@ export async function POST(request: NextRequest) {
       passkeyOptions,
     });
   } catch (error) {
-    console.error("Authentication options error:", error);
+    authLogger.error("Error in authentication options:", error);
     return NextResponse.json(
-      { error: (error as Error).message },
+      { error: "Authentication options generation failed" },
       { status: 400 }
     );
   }

@@ -28,7 +28,11 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 });
 
 // Test function to verify Supabase connection
-export async function testSupabaseConnection() {
+export async function testSupabaseConnection(): Promise<{
+  success: boolean;
+  data?: unknown;
+  error?: unknown;
+}> {
   try {
     const { data, error } = await supabase
       .from("users")

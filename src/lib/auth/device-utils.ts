@@ -3,7 +3,6 @@
  */
 
 import { getBrowserInfo } from "./browser-detection";
-import { createHash } from "crypto";
 
 /**
  * Detects the current device type based on user agent
@@ -57,13 +56,28 @@ interface ExtendedNavigator extends Navigator {
   deviceMemory?: number;
 }
 
+// Fix line 65: Define a proper interface for components
+interface DeviceComponents {
+  userAgent?: string;
+  language?: string;
+  platform?: string;
+  screenResolution?: string;
+  timezone?: string;
+  browserPluginsLength?: number;
+  hasLocalStorage?: boolean;
+  hasSessionStorage?: boolean;
+  hasIndexedDB?: boolean;
+  cpuCores?: number;
+  [key: string]: unknown;
+}
+
 /**
  * Generates a consistent device fingerprint based on available browser information
  * This is used to identify the same device across sessions for passkey usage
  */
 export async function getDeviceFingerprint(): Promise<{
   fingerprint: string;
-  components: any;
+  components: DeviceComponents;
 }> {
   if (typeof window === "undefined") {
     return {
@@ -184,4 +198,20 @@ function hash(str: string): string {
     h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
   }
   return Math.abs(h).toString(16);
+}
+
+// Update return type of function returning components to use the new interface
+export async function generateDeviceFingerprint(): Promise<{
+  fingerprint: string;
+  components: DeviceComponents;
+}> {
+  // Re-use the existing device fingerprinting function
+  return await getDeviceFingerprint();
+}
+
+// Fix unsafe return of any by ensuring the function returns a specific type
+export function normalizeFingerprint(fingerprint: string): string {
+  // Ensure consistent format for fingerprints
+  // This is a simple normalization that trims and lowercases the fingerprint
+  return fingerprint.trim().toLowerCase();
 }

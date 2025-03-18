@@ -22,11 +22,6 @@ export interface DebugLogEntry {
   stored?: string | null;
 }
 
-// Define a type for errors
-type ErrorWithMessage = {
-  message: string;
-};
-
 // Debug logging function that persists across refreshes
 const debugLog = (action: string, data?: unknown) => {
   if (typeof window === "undefined") return;

@@ -33,6 +33,7 @@ export interface DeviceInfo {
   isMobile?: boolean;
   isDesktop?: boolean;
   isTablet?: boolean;
+  [key: string]: unknown;
 }
 
 export interface Challenge {

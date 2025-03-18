@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Credential } from "@/types/auth";
+import { apiRequest } from "@/lib/api/client-helpers";
 
 // Import shadcn/ui components
 import { Button } from "@/components/ui/button";
@@ -27,11 +28,9 @@ export default function PasskeyList() {
   useEffect(() => {
     async function fetchCredentials() {
       try {
-        const response = await fetch("/api/auth/credentials");
-        if (!response.ok) {
-          throw new Error("Failed to fetch credentials");
-        }
-        const data = await response.json();
+        const data = await apiRequest<{ credentials: Credential[] }>(
+          "/api/auth/credentials"
+        );
         setCredentials(data.credentials);
       } catch (error) {
         setError(
@@ -71,12 +70,12 @@ export default function PasskeyList() {
 
   const handleDelete = async (credentialId: string) => {
     try {
-      const response = await fetch(`/api/auth/credentials/${credentialId}`, {
-        method: "DELETE",
-      });
-      if (!response.ok) {
-        throw new Error("Failed to delete credential");
-      }
+      await apiRequest<{ success: boolean }>(
+        `/api/auth/credentials/${credentialId}`,
+        {
+          method: "DELETE",
+        }
+      );
       setCredentials((prev) => prev.filter((c) => c.id !== credentialId));
     } catch (err) {
       alert("Failed to remove passkey. Please try again later.");

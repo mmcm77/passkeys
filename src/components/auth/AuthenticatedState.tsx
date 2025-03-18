@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { LogOut, Shield, LaptopIcon } from "lucide-react";
 import { DeviceList } from "./DeviceList";
 import { getCredentialsForUser } from "@/lib/db/device-credentials";
 import type { DeviceCredential } from "@/types/auth";
 import { Badge } from "@/components/ui/badge";
+import { apiRequest } from "@/lib/api/client-helpers";
 
 interface AuthenticatedUser {
   userId: string;
@@ -25,7 +27,7 @@ interface AuthenticatedStateProps {
 export function AuthenticatedState({
   user,
   onSignOut,
-}: AuthenticatedStateProps) {
+}: AuthenticatedStateProps): ReactNode {
   const [devices, setDevices] = useState<DeviceCredential[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [passkeys, setPasskeys] = useState<DeviceCredential[]>([]);
@@ -43,7 +45,7 @@ export function AuthenticatedState({
       }
     };
 
-    fetchDevices();
+    void fetchDevices();
   }, [user.userId]);
 
   useEffect(() => {
@@ -52,28 +54,34 @@ export function AuthenticatedState({
 
       setIsLoading(true);
       try {
-        // Fetch all passkeys for the user
-        const response = await fetch(
-          `/api/auth/passkeys?userId=${user.userId}`
-        );
+        // Fetch all passkeys for the user using the new utility
+        const data = await apiRequest<{
+          passkeys: DeviceCredential[];
+          count: number;
+          uniqueCount: number;
+          hasDuplicates: boolean;
+        }>(`/api/auth/passkeys?userId=${user.userId}`);
 
-        if (response.ok) {
-          const data = await response.json();
-          // Display all passkeys without deduplication
+        // Check if passkeys exist in the data
+        if (data.passkeys && Array.isArray(data.passkeys)) {
           setPasskeys(data.passkeys);
           console.log(`Loaded ${data.passkeys.length} passkeys for user`);
+        } else {
+          console.warn("No passkeys found in response data:", data);
+          setPasskeys([]);
         }
       } catch (error) {
         console.error("Error loading passkeys:", error);
+        setPasskeys([]);
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadPasskeys();
+    void loadPasskeys();
   }, [user]);
 
-  const handleRemoveDevice = async (credentialId: string) => {
+  const handleRemoveDevice = async (credentialId: string): Promise<void> => {
     // Update the local state first for immediate UI feedback
     setDevices(
       devices.filter((device) => device.credentialId !== credentialId)
@@ -81,21 +89,23 @@ export function AuthenticatedState({
 
     // Then update the database
     try {
-      const response = await fetch(
+      // Use the new utility for a cleaner implementation
+      const result = await apiRequest<{ success: boolean; message: string }>(
         `/api/auth/credentials/${credentialId}?type=device`,
-        {
-          method: "DELETE",
-        }
+        { method: "DELETE" }
       );
 
-      if (!response.ok) {
-        // If the API call fails, revert the UI change by refetching
-        const credentials = await getCredentialsForUser(user.userId);
-        setDevices(credentials);
-        throw new Error("Failed to remove device");
-      }
+      console.log("Device removed successfully:", result.message);
     } catch (error) {
       console.error("Error removing device:", error);
+
+      // If the API call fails, revert the UI change by refetching
+      try {
+        const credentials = await getCredentialsForUser(user.userId);
+        setDevices(credentials);
+      } catch (refetchError) {
+        console.error("Error refetching devices:", refetchError);
+      }
     }
   };
 

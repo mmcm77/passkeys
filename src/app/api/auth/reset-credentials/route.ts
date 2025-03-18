@@ -1,32 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserByEmail } from "@/lib/db/users";
 import { deleteAllCredentialsForUser } from "@/lib/db/credentials";
+import { logger } from "@/lib/api/logger";
 
-export async function POST(request: NextRequest) {
+// Create a scoped logger for this route
+const resetLogger = logger.scope("ResetCredentials");
+
+interface ResetCredentialsResponse {
+  success: boolean;
+  error?: string;
+}
+
+export async function POST(
+  request: Request
+): Promise<NextResponse<ResetCredentialsResponse>> {
   try {
-    const { email } = await request.json();
+    const { userId } = (await request.json()) as { userId: string };
 
-    if (!email) {
-      return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "User ID is required" },
+        { status: 400 }
+      );
     }
 
-    // Get user by email
-    const user = await getUserByEmail(email);
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    // Reset user's credentials in your database
+    await deleteAllCredentialsForUser(userId);
 
-    // Delete all credentials for the user
-    await deleteAllCredentialsForUser(user.id);
-
-    return NextResponse.json({
-      success: true,
-      message: "All credentials have been reset for this user",
-    });
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error resetting credentials:", error);
     return NextResponse.json(
-      { error: (error as Error).message },
+      { success: false, error: "Failed to reset credentials" },
       { status: 500 }
     );
   }

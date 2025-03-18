@@ -1,3 +1,4 @@
+import React from "react";
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,8 +16,14 @@ import {
   shouldUseSafariWebAuthn,
   chromeStartRegistration,
   shouldUseChromeWebAuthn,
+  WebAuthnOptions,
 } from "@/lib/auth/safari-webauthn";
 import { startRegistration } from "@simplewebauthn/browser";
+import { apiRequest } from "@/lib/api/client-helpers";
+import {
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from "@simplewebauthn/browser";
 
 interface User {
   id: string;
@@ -25,27 +32,9 @@ interface User {
   [key: string]: unknown; // For any additional properties
 }
 
-interface RegistrationOptions {
-  challenge: string;
-  rp: {
-    name: string;
-    id: string;
-  };
-  user: {
-    id: string;
-    name: string;
-    displayName: string;
-  };
-  pubKeyCredParams: Array<{
-    type: string;
-    alg: number;
-  }>;
-  timeout?: number;
-  excludeCredentials?: unknown[];
-  authenticatorSelection?: Record<string, unknown>;
-  attestation?: string;
-  extensions?: Record<string, unknown>;
-  [key: string]: unknown; // For any additional properties
+interface RegistrationOptions extends PublicKeyCredentialCreationOptionsJSON {
+  challengeId?: string;
+  [key: string]: unknown;
 }
 
 interface NewDeviceRegistrationProps {
@@ -62,7 +51,7 @@ export function NewDeviceRegistration({
   onSuccess,
   onError,
   onCancel,
-}: NewDeviceRegistrationProps) {
+}: NewDeviceRegistrationProps): React.ReactElement {
   const [isRegistering, setIsRegistering] = useState(false);
   const [isPreparingOptions, setIsPreparingOptions] = useState(false);
   const [registrationOptions, setRegistrationOptions] =
@@ -74,7 +63,7 @@ export function NewDeviceRegistration({
   const isChrome = shouldUseChromeWebAuthn();
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  const getDeviceIcon = () => {
+  const getDeviceIcon = (): React.ReactElement => {
     switch (deviceType) {
       case "mobile":
         return <SmartphoneIcon size={32} />;
@@ -85,7 +74,7 @@ export function NewDeviceRegistration({
     }
   };
 
-  const getDeviceName = () => {
+  const getDeviceName = (): string => {
     const ua = navigator.userAgent;
     let os = "device";
 
@@ -100,7 +89,9 @@ export function NewDeviceRegistration({
 
   // Step 1: Fetch registration options - separate from the WebAuthn call
   useEffect(() => {
-    const fetchOptions = async () => {
+    let mounted = true;
+
+    const fetchOptions = async (): Promise<void> => {
       if (registrationOptions) return; // Already have options
 
       setIsPreparingOptions(true);
@@ -111,24 +102,19 @@ export function NewDeviceRegistration({
           browserInfo.version
         );
 
-        // Request registration options from the server
-        const response = await fetch("/api/auth/register/options", {
+        // Request registration options from the server using the new utility
+        const data = await apiRequest<
+          { challengeId: string } & RegistrationOptions
+        >("/api/auth/register/options", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, userId }),
         });
 
-        if (!response.ok) {
-          throw new Error("Failed to get registration options");
-        }
-
-        const data = await response.json();
-
         // Extract challenge ID first
         const extractedChallengeId = data.challengeId;
 
         // Create proper options object - remove challengeId as it's not part of WebAuthn options
-        // Using _ to explicitly indicate we're destructuring this property but not using it
         const { challengeId: _, ...extractedOptions } = data;
 
         console.log(
@@ -137,26 +123,43 @@ export function NewDeviceRegistration({
         );
 
         // Store options for later use (on user gesture for Safari)
-        setRegistrationOptions(extractedOptions);
+        setRegistrationOptions(extractedOptions as RegistrationOptions);
         setChallengeId(extractedChallengeId);
       } catch (error) {
         console.error("Error pre-fetching registration options:", error);
+        if (mounted) {
+          onError(
+            error instanceof Error
+              ? error
+              : new Error("Failed to fetch registration options")
+          );
+        }
       } finally {
-        setIsPreparingOptions(false);
+        if (mounted) {
+          setIsPreparingOptions(false);
+        }
       }
     };
 
-    fetchOptions();
+    void fetchOptions();
+
+    return () => {
+      mounted = false;
+    };
   }, [
     email,
     userId,
     registrationOptions,
     browserInfo.browser,
     browserInfo.version,
+    onError,
   ]);
 
   // Step 2: Complete registration using the pre-fetched options
-  const completeRegistration = async (options: any, chId: string) => {
+  const completeRegistration = async (
+    options: PublicKeyCredentialCreationOptionsJSON,
+    chId: string
+  ): Promise<void> => {
     if (!options || !chId) {
       console.error("Registration options or challengeId missing");
       onError(new Error("Registration options or challengeId missing"));
@@ -174,18 +177,38 @@ export function NewDeviceRegistration({
       // Use browser-specific implementations
       let attResp;
 
+      // Ensure required properties are present
+      const webAuthnOptions: WebAuthnOptions = {
+        ...options,
+        rp: {
+          ...options.rp,
+          id: options.rp.id || window.location.hostname,
+        },
+        challenge: options.challenge || "",
+        user: {
+          ...options.user,
+          id: options.user.id || "",
+          name: options.user.name || "",
+          displayName: options.user.displayName || "",
+        },
+        pubKeyCredParams: options.pubKeyCredParams.map((param) => ({
+          type: "public-key" as const,
+          alg: param.alg,
+        })),
+      };
+
       // For Safari, we need to call the WebAuthn function directly within the click handler
       if (isSafari) {
         console.log(
           "Using Safari-specific registration flow - direct WebAuthn call"
         );
-        attResp = await safariStartRegistration(options);
+        attResp = await safariStartRegistration(webAuthnOptions);
       } else if (isChrome) {
         console.log("Using Chrome-specific registration flow");
-        attResp = await chromeStartRegistration(options);
+        attResp = await chromeStartRegistration(webAuthnOptions);
       } else {
         console.log("Using standard registration flow");
-        attResp = await startRegistration(options);
+        attResp = await startRegistration({ optionsJSON: options });
       }
 
       console.log("Registration successful, verifying with server");
@@ -203,41 +226,26 @@ export function NewDeviceRegistration({
         name: getDeviceName(),
       };
 
-      // Verify the registration with the server
-      const verifyResponse = await fetch("/api/auth/register/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          challengeId: chId,
-          credential: attResp,
-          deviceType,
-          browserInfo: deviceDetails,
-        }),
-      });
+      // Verify the registration with the server using the new utility
+      const verifyData = await apiRequest<{ user: User }>(
+        "/api/auth/register/verify",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            challengeId: chId,
+            credential: attResp,
+            deviceType,
+            browserInfo: deviceDetails,
+          }),
+        }
+      );
 
-      if (!verifyResponse.ok) {
-        const errorText = await verifyResponse.text();
-        console.error("Verification failed:", errorText);
-        throw new Error(`Registration verification failed: ${errorText}`);
-      }
+      console.log("Registration verified successfully");
 
-      const data = await verifyResponse.json();
-      console.log("Registration verification successful:", data);
-
-      // Ensure we're passing the updated passkey count and device information
-      if (data.user) {
-        // Make sure we have the latest passkey count and device information
-        onSuccess({
-          ...data.user,
-          // Ensure credential ID is included for device tracking
-          credentialId: attResp.id,
-          // Include specific device info for better display
-          deviceInfo: deviceDetails,
-        });
-      } else {
-        onSuccess(data.user);
-      }
+      // Close the device registration and call the success callback
+      onSuccess(verifyData.user);
     } catch (error) {
       console.error("Registration error:", error);
       onError(
@@ -249,7 +257,7 @@ export function NewDeviceRegistration({
   };
 
   // Button click handler - critical for Safari
-  const handleButtonClick = async () => {
+  const handleButtonClick = async (): Promise<void> => {
     if (isRegistering) return;
     setIsRegistering(true);
 
@@ -259,7 +267,6 @@ export function NewDeviceRegistration({
         throw new Error("Registration options not available");
       }
 
-      // This is the critical part for Safari - we call the WebAuthn function directly from the click handler
       await completeRegistration(registrationOptions, challengeId);
     } catch (error) {
       console.error("Error in button click handler:", error);
@@ -289,12 +296,12 @@ export function NewDeviceRegistration({
 
         <div className="flex flex-col space-y-2">
           <Button
-            ref={buttonRef}
             onClick={handleButtonClick}
             disabled={
               isRegistering || isPreparingOptions || !registrationOptions
             }
             className="w-full"
+            {...{ ref: buttonRef }}
           >
             {isRegistering
               ? "Setting up..."
