@@ -276,6 +276,20 @@ export async function safariStartAuthentication(
     throw new Error("Authentication failed: Missing RP data");
   }
 
+  // Ensure credentials have all possible transports for Safari
+  if (options.excludeCredentials) {
+    for (const cred of options.excludeCredentials) {
+      if (!cred.transports || cred.transports.length === 0) {
+        // Add all possible transports if none specified
+        cred.transports = ["internal", "hybrid", "ble", "nfc", "usb"];
+      } else if (!cred.transports.includes("internal")) {
+        // Ensure internal is always included for Safari
+        cred.transports.push("internal");
+      }
+    }
+    console.log("Safari WebAuthn: Enhanced transports for credentials");
+  }
+
   try {
     console.log(
       "Safari WebAuthn: Calling startAuthentication with SimpleWebAuthn"
@@ -317,7 +331,14 @@ export async function safariStartAuthentication(
           options.excludeCredentials?.map((cred) => ({
             id: base64URLToUint8Array(cred.id),
             type: "public-key",
-            transports: cred.transports as AuthenticatorTransport[],
+            // Always include all transports for Safari
+            transports: [
+              "internal",
+              "hybrid",
+              "ble",
+              "nfc",
+              "usb",
+            ] as AuthenticatorTransport[],
           })) || [],
       };
 

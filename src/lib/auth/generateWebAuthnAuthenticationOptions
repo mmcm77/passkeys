@@ -1,0 +1,21 @@
+// Generate authentication options
+export async function generateWebAuthnAuthenticationOptions(
+  allowCredentials: {
+    id: string;
+    transports?: AuthenticatorTransportFuture[];
+  }[] = []
+): Promise<ReturnType<typeof generateAuthenticationOptions>> {
+  const options: GenerateAuthenticationOptionsOpts = {
+    rpID: getRpId(),
+    allowCredentials: allowCredentials.map((cred) => ({
+      ...cred,
+      // Ensure all possible transports are included if not specified
+      transports: cred.transports?.length
+        ? cred.transports
+        : ["internal", "hybrid", "ble", "nfc", "usb"],
+    })),
+    userVerification: "preferred",
+  };
+
+  return generateAuthenticationOptions(options);
+}

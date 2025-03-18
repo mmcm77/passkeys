@@ -131,10 +131,21 @@ export async function generateWebAuthnAuthenticationOptions(
 ): Promise<ReturnType<typeof generateAuthenticationOptions>> {
   const options: GenerateAuthenticationOptionsOpts = {
     rpID: getRpId(),
-    allowCredentials,
+    allowCredentials: allowCredentials.map((cred) => ({
+      id: cred.id,
+      type: "public-key",
+      // Ensure all possible transports are included if not specified
+      transports: cred.transports?.length
+        ? cred.transports
+        : ["internal", "hybrid", "ble", "nfc", "usb"],
+    })),
     userVerification: "preferred",
   };
 
+  console.log(
+    "Authentication options with enhanced transports:",
+    JSON.stringify(options)
+  );
   return generateAuthenticationOptions(options);
 }
 
@@ -264,7 +275,8 @@ export async function generatePasskeyOptions(
     excludeCredentials: existingCredentials.map((cred) => ({
       id: cred.credentialId,
       type: "public-key",
-      transports: ["internal"],
+      // Include all possible transports to maximize compatibility, especially for Safari
+      transports: ["internal", "hybrid", "ble", "nfc", "usb"],
     })),
   });
 
