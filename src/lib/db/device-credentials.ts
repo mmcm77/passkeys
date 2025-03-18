@@ -1,6 +1,9 @@
 import supabase from "../supabase";
 import { getDeviceFingerprint } from "@/lib/auth/device-utils";
-import { getBrowserInfo } from "@/lib/auth/browser-detection";
+import {
+  getBrowserInfo,
+  shouldUsePasskeyDiscovery,
+} from "@/lib/auth/browser-detection";
 import { detectDeviceType } from "@/lib/auth/device-utils";
 import type { DeviceCredential } from "@/types/auth";
 import type { Database } from "@/types/database";
@@ -184,6 +187,18 @@ export async function getCredentialsForCurrentDevice(
       return [];
     }
 
+    // For Safari and Chrome, we'll rely on native passkey discovery instead of fingerprinting
+    if (shouldUsePasskeyDiscovery()) {
+      console.log(
+        "Using native passkey discovery instead of fingerprinting for this browser"
+      );
+
+      // Return an empty array - the passkey selection will be handled by the browser
+      // This prevents the device registration flow from showing when it's not needed
+      return ["passkey-discovery-enabled"];
+    }
+
+    // For other browsers, continue with fingerprinting approach
     // Get device fingerprint for the current browser
     const fingerprintResponse =
       (await getDeviceFingerprint()) as DeviceFingerprintResponse;
@@ -467,7 +482,11 @@ export async function generateDeviceToken(
       throw new Error("Device credential not found");
     }
 
-    const deviceCredentialId = deviceCredentials[0].id;
+    const deviceCredentialId = deviceCredentials[0]?.id;
+
+    if (!deviceCredentialId) {
+      throw new Error("Device credential ID is undefined");
+    }
 
     // Update the device credential with the token
     const { error: updateError } = await supabase

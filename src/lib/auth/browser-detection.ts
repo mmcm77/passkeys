@@ -280,3 +280,102 @@ export async function isOptimalWebAuthnEnvironment(): Promise<OptimalEnvironment
     missingFeatures,
   };
 }
+
+/**
+ * Determines whether we should use native passkey discovery instead of device fingerprinting
+ * for the current browser
+ */
+export function shouldUsePasskeyDiscovery(): boolean {
+  const browserInfo = getBrowserInfo();
+
+  // Safari/iOS Safari and Chrome on desktop are good candidates for native discovery
+  if (browserInfo.browser === "Safari") {
+    return true;
+  }
+
+  // Chrome is also good with passkeys
+  if (browserInfo.browser === "Chrome") {
+    return true;
+  }
+
+  // Use native discovery if platform authenticator is available on other browsers
+  if (
+    typeof navigator !== "undefined" &&
+    "credentials" in navigator &&
+    "PublicKeyCredential" in window &&
+    "isUserVerifyingPlatformAuthenticatorAvailable" in
+      window.PublicKeyCredential
+  ) {
+    return true;
+  }
+
+  // Fall back to device fingerprinting for other browsers
+  return false;
+}
+
+/**
+ * Checks if the current browser meets the minimum version requirements for passkey support
+ * Based on SimpleWebAuthn documentation
+ */
+export function isPasskeySupported(): boolean {
+  const browserInfo = getBrowserInfo();
+
+  // Safari requires iOS 16+ or macOS 13+ (Ventura)
+  if (browserInfo.browser === "Safari") {
+    if (browserInfo.os === "iOS") {
+      // Extract major version number
+      const versionStr = browserInfo.version || "";
+      const majorVersion = parseInt(versionStr.split(".")[0] || "0", 10);
+      return !isNaN(majorVersion) && majorVersion >= 16;
+    }
+    if (browserInfo.os === "macOS") {
+      // macOS version detection is tricky via user agent
+      // Most reliable way is to check Safari version (16+ corresponds to Ventura)
+      const versionStr = browserInfo.version || "";
+      const majorVersion = parseInt(versionStr.split(".")[0] || "0", 10);
+      return !isNaN(majorVersion) && majorVersion >= 16;
+    }
+  }
+
+  // Chrome/Android requires Android 9+
+  if (browserInfo.browser === "Chrome" && browserInfo.os === "Android") {
+    // Android version detection via user agent is unreliable
+    // We'll assume Chrome on Android is recent enough if WebAuthn is available
+    return (
+      typeof window !== "undefined" &&
+      "PublicKeyCredential" in window &&
+      window.PublicKeyCredential &&
+      "isUserVerifyingPlatformAuthenticatorAvailable" in
+        window.PublicKeyCredential
+    );
+  }
+
+  // Chrome on desktop generally has good support in recent versions
+  if (browserInfo.browser === "Chrome" && !browserInfo.mobile) {
+    return true;
+  }
+
+  // For other browsers, check for platform authenticator support
+  return (
+    typeof window !== "undefined" &&
+    "PublicKeyCredential" in window &&
+    window.PublicKeyCredential &&
+    "isUserVerifyingPlatformAuthenticatorAvailable" in
+      window.PublicKeyCredential
+  );
+}
+
+/**
+ * Checks if a registration verification result represents a true passkey
+ * (multi-device credential that is backed up to the cloud)
+ */
+export function isCredentialPasskey(registrationInfo: {
+  credentialDeviceType?: string;
+  credentialBackedUp?: boolean;
+}): boolean {
+  // True passkeys are multi-device credentials that are backed up
+  return (
+    registrationInfo.credentialDeviceType === "multiDevice" &&
+    !!registrationInfo.credentialBackedUp
+  );
+}

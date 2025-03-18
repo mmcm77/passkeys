@@ -276,8 +276,16 @@ export async function safariStartAuthentication(
     throw new Error("Authentication failed: Missing RP data");
   }
 
-  // Ensure credentials have all possible transports for Safari
-  if (options.excludeCredentials) {
+  // For best passkey support, use an empty allowCredentials array
+  // to let the browser show all available passkeys
+  const usePasskeyDiscovery =
+    !options.excludeCredentials || options.excludeCredentials.length === 0;
+  console.log(
+    `Safari WebAuthn: Using passkey discovery mode: ${usePasskeyDiscovery}`
+  );
+
+  // If we have specific credentials, ensure they have proper transports
+  if (!usePasskeyDiscovery && options.excludeCredentials) {
     for (const cred of options.excludeCredentials) {
       if (!cred.transports || cred.transports.length === 0) {
         // Add all possible transports if none specified
@@ -327,19 +335,21 @@ export async function safariStartAuthentication(
         userVerification:
           (options.authenticatorSelection
             ?.userVerification as UserVerificationRequirement) || "preferred",
-        allowCredentials:
-          options.excludeCredentials?.map((cred) => ({
-            id: base64URLToUint8Array(cred.id),
-            type: "public-key",
-            // Always include all transports for Safari
-            transports: [
-              "internal",
-              "hybrid",
-              "ble",
-              "nfc",
-              "usb",
-            ] as AuthenticatorTransport[],
-          })) || [],
+        // For passkey discovery flow, use empty allowCredentials
+        allowCredentials: usePasskeyDiscovery
+          ? []
+          : options.excludeCredentials?.map((cred) => ({
+              id: base64URLToUint8Array(cred.id),
+              type: "public-key",
+              // Always include all transports for Safari
+              transports: [
+                "internal",
+                "hybrid",
+                "ble",
+                "nfc",
+                "usb",
+              ] as AuthenticatorTransport[],
+            })) || [],
       };
 
       console.log(

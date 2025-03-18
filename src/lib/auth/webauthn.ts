@@ -129,21 +129,28 @@ export async function generateWebAuthnAuthenticationOptions(
     transports?: AuthenticatorTransportFuture[];
   }[] = []
 ): Promise<ReturnType<typeof generateAuthenticationOptions>> {
+  // When using passkeys in modern browsers, an empty allowCredentials array
+  // lets the browser show all available passkeys for the domain
   const options: GenerateAuthenticationOptionsOpts = {
     rpID: getRpId(),
-    allowCredentials: allowCredentials.map((cred) => ({
-      id: cred.id,
-      type: "public-key",
-      // Ensure all possible transports are included if not specified
-      transports: cred.transports?.length
-        ? cred.transports
-        : ["internal", "hybrid", "ble", "nfc", "usb"],
-    })),
+    // For true passkey support, we shouldn't restrict which credentials can be used
+    // This enables "usernameless" authentication flow
+    allowCredentials:
+      allowCredentials.length > 0
+        ? allowCredentials.map((cred) => ({
+            id: cred.id,
+            type: "public-key",
+            // Ensure all possible transports are included if not specified
+            transports: cred.transports?.length
+              ? cred.transports
+              : ["internal", "hybrid", "ble", "nfc", "usb"],
+          }))
+        : [], // Empty array enables discovery of any credential for this RP
     userVerification: "preferred",
   };
 
   console.log(
-    "Authentication options with enhanced transports:",
+    "Authentication options with enhanced passkey support:",
     JSON.stringify(options)
   );
   return generateAuthenticationOptions(options);
