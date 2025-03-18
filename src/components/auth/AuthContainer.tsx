@@ -485,10 +485,22 @@ export default function AuthContainer({
                         <FormLabel>Email</FormLabel>
                         <FormControl>
                           <Input
+                            id="email-input-field"
                             placeholder="you@example.com"
                             type="email"
                             autoComplete="email webauthn"
                             {...field}
+                            onChange={(e) => {
+                              field.onChange(e);
+                              if (e.target.value !== email) {
+                                setEmail(e.target.value);
+                              }
+                            }}
+                            ref={(inputElement) => {
+                              if (inputElement) {
+                                (field as any).ref(inputElement);
+                              }
+                            }}
                           />
                         </FormControl>
                         <FormMessage />
@@ -860,6 +872,70 @@ export default function AuthContainer({
 
     void checkDeviceToken();
   }, []);
+
+  // Update the autofill detection useEffect
+  useEffect(() => {
+    // Add detection for Safari autofill
+    const emailInput = document.getElementById(
+      "email-input-field"
+    ) as HTMLInputElement;
+    if (!emailInput) return;
+
+    // Function to check input value and update state if needed
+    const checkAutofillValue = () => {
+      if (emailInput && emailInput.value && emailInput.value !== email) {
+        console.log("Detected autofilled value:", emailInput.value);
+        setEmail(emailInput.value);
+        form.setValue("email", emailInput.value, {
+          shouldValidate: true, // Important: trigger validation
+          shouldDirty: true, // Mark as dirty so form knows it changed
+        });
+      }
+    };
+
+    // Check immediately after render
+    checkAutofillValue();
+
+    // Set up animation detection which is most reliable for Safari
+    const style = document.createElement("style");
+    style.textContent = `
+      @keyframes onAutoFillStart { from {} to {} }
+      @keyframes onAutoFillCancel { from {} to {} }
+      input:-webkit-autofill { animation-name: onAutoFillStart; }
+      input:not(:-webkit-autofill) { animation-name: onAutoFillCancel; }
+    `;
+    document.head.appendChild(style);
+
+    // Listen for the animation events
+    const handleAnimation = (e: AnimationEvent) => {
+      if (e.animationName === "onAutoFillStart") {
+        // Wait a tiny bit for the autofill to complete
+        setTimeout(checkAutofillValue, 20);
+      }
+    };
+
+    emailInput.addEventListener(
+      "animationstart",
+      handleAnimation as EventListener
+    );
+
+    // Use a brief interval check that won't interfere with form submission
+    const intervalId = setInterval(checkAutofillValue, 100);
+    // Stop checking after 1 second to avoid form interference
+    const timeoutId = setTimeout(() => clearInterval(intervalId), 1000);
+
+    return () => {
+      document.head.removeChild(style);
+      emailInput.removeEventListener(
+        "animationstart",
+        handleAnimation as EventListener
+      );
+      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+    };
+    // Use a ref for tracking the latest email value to avoid
+    // re-triggering the effect when email changes
+  }, [form]); // Only depend on form, not email
 
   return (
     <Card className="w-full max-w-md mx-auto">
