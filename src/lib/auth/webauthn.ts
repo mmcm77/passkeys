@@ -238,6 +238,16 @@ export async function generatePasskeyOptions(
     throw new Error("Missing RP ID configuration");
   }
 
+  // Double-check that RP ID doesn't have https:// (common mistake)
+  if (rpId.includes("://")) {
+    console.error(
+      `Invalid RP ID format: ${rpId}. RP ID should not include protocol.`
+    );
+    throw new Error(
+      "Invalid RP ID format: should not include protocol (https://)"
+    );
+  }
+
   // Generate registration options
   const options = await generateRegistrationOptions({
     rpName: rpName,
@@ -257,6 +267,16 @@ export async function generatePasskeyOptions(
       transports: ["internal"],
     })),
   });
+
+  // Verify that RP ID was set correctly in the options
+  if (options.rp.id && options.rp.id.includes("://")) {
+    console.error(`Generated options contain invalid RP ID: ${options.rp.id}`);
+    // Fix the RP ID in the options object
+    options.rp.id = options.rp.id
+      .replace(/^https?:\/\//, "")
+      .replace(/\/+$/, "");
+    console.log(`Corrected RP ID to: ${options.rp.id}`);
+  }
 
   return options;
 }

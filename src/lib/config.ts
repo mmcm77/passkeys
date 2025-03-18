@@ -70,7 +70,12 @@ export const config = {
       if (!process.env.NEXT_PUBLIC_RP_ID && typeof window !== "undefined") {
         return window.location.hostname;
       }
-      return process.env.NEXT_PUBLIC_RP_ID || "";
+
+      // Ensure the RP ID is just the domain (no https:// or trailing slashes)
+      const rpId = process.env.NEXT_PUBLIC_RP_ID || "";
+
+      // Remove any protocol (https://) if present
+      return rpId.replace(/^https?:\/\//, "").replace(/\/+$/, "");
     },
     /** The relying party name (shown to users) */
     rpName: process.env.NEXT_PUBLIC_RP_NAME || "Passkeys App",
