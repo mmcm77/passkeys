@@ -3,12 +3,14 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { KeyRound } from "lucide-react";
+import { KeyRound, Smartphone } from "lucide-react";
 import { startAuthentication } from "@simplewebauthn/browser";
 import type {
   AuthenticationResponseJSON,
   PublicKeyCredentialRequestOptionsJSON,
 } from "@simplewebauthn/browser";
+import { cn } from "@/lib/utils";
+import { UserIcon, KeyIcon, ChevronRightIcon } from "lucide-react";
 
 // Replace any with proper types
 interface PasskeyLoginProps {
@@ -16,6 +18,7 @@ interface PasskeyLoginProps {
   onSuccess: (user: UserData) => void;
   onError: (error: Error) => void;
   buttonStyle?: "default" | "simplified" | "embedded";
+  useBrowserAutofill?: boolean;
 }
 
 // Define a proper type for user data
@@ -38,6 +41,7 @@ export function PasskeyLoginButton({
   onSuccess,
   onError,
   buttonStyle = "default",
+  useBrowserAutofill = false,
 }: PasskeyLoginProps): ReactNode {
   const [isLoading, setIsLoading] = useState(false);
 
@@ -46,9 +50,13 @@ export function PasskeyLoginButton({
       setIsLoading(true);
 
       // Get authentication options from server
-      const authResponse = await fetch(
-        `/api/auth/authenticate/options?email=${encodeURIComponent(email)}`
-      );
+      const authResponse = await fetch(`/api/auth/authenticate/options`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email }),
+      });
 
       if (!authResponse.ok) {
         throw new Error(
@@ -62,6 +70,7 @@ export function PasskeyLoginButton({
       // Start authentication with proper options format
       const authenticationResponse = await startAuthentication({
         optionsJSON: options,
+        useBrowserAutofill: useBrowserAutofill,
       });
 
       // Verify authentication with server
@@ -106,22 +115,38 @@ export function PasskeyLoginButton({
 
   // Use the buttonStyle prop to customize the button appearance
   return (
-    <Button
-      className="w-full"
-      variant="default"
+    <button
+      className={cn(
+        "w-full flex items-center justify-between rounded-md py-4 px-5 bg-card hover:bg-card/80 border border-border transition-colors",
+        "disabled:opacity-50 disabled:pointer-events-none",
+        buttonStyle === "embedded" ? "py-3 px-4" : ""
+      )}
       disabled={isLoading}
       onClick={() => void handlePasskeyLogin()}
     >
       {isLoading ? (
-        "Authenticating..."
-      ) : buttonStyle === "simplified" ? (
-        "Continue with passkey"
+        <div className="flex items-center justify-center w-full">
+          <span className="animate-pulse">Authenticating...</span>
+        </div>
       ) : (
         <>
-          <KeyRound className="mr-2 h-4 w-4" />
-          Sign in with passkey
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <div className="flex items-center justify-center h-8 w-8 bg-muted rounded-full">
+                <UserIcon className="h-5 w-5" />
+              </div>
+              <div className="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-0.5">
+                <KeyIcon className="h-3 w-3" />
+              </div>
+            </div>
+            <div className="flex flex-col justify-center text-left">
+              <span className="font-medium text-sm">Login with Passkey</span>
+              <span className="text-muted-foreground text-xs">{email}</span>
+            </div>
+          </div>
+          <ChevronRightIcon className="h-5 w-5 text-muted-foreground" />
         </>
       )}
-    </Button>
+    </button>
   );
 }

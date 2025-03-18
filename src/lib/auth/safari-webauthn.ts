@@ -15,6 +15,44 @@ import {
 import { AuthenticatorTransportFuture } from "@/types/webauthn";
 import { getBrowserInfo } from "./browser-detection";
 
+/**
+ * Helper function to convert base64URL to Uint8Array
+ */
+function base64URLToUint8Array(base64url: string): Uint8Array {
+  // Calculate padding with a more direct approach to avoid type issues
+  let padding = "";
+  if (base64url.length % 4 === 2) padding = "==";
+  else if (base64url.length % 4 === 3) padding = "=";
+
+  const base64 = (base64url + padding).replace(/-/g, "+").replace(/_/g, "/");
+
+  const rawData = window.atob(base64);
+  const buffer = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; i++) {
+    buffer[i] = rawData.charCodeAt(i);
+  }
+
+  return buffer;
+}
+
+/**
+ * Helper function to convert ArrayBuffer to base64 string
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+
+  const base64 = window.btoa(binary);
+
+  // Convert to base64URL format
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
 // Define the proper types
 type AuthenticatorAttachment = "platform" | "cross-platform";
 type ResidentKeyRequirement = "discouraged" | "preferred" | "required";
@@ -76,16 +114,120 @@ export async function safariStartRegistration(
   options: WebAuthnOptions
 ): Promise<RegistrationResponseJSON> {
   console.log(
-    "Using Safari-specific registration flow with direct user gesture handling"
+    "Safari WebAuthn: Starting registration with these options:",
+    JSON.stringify(
+      {
+        rp: options.rp,
+        authenticatorSelection: options.authenticatorSelection,
+        pubKeyCredParams: options.pubKeyCredParams.map((p) => p.alg),
+        timeout: options.timeout,
+        attestation: options.attestation,
+      },
+      null,
+      2
+    )
   );
 
+  // Validate key properties
+  if (!options.challenge) {
+    console.error("Safari WebAuthn: Missing challenge in options");
+    throw new Error("Registration failed: Missing challenge");
+  }
+
+  if (!options.user || !options.user.id) {
+    console.error("Safari WebAuthn: Missing user.id in options");
+    throw new Error("Registration failed: Missing user data");
+  }
+
+  if (!options.rp || !options.rp.id) {
+    console.error("Safari WebAuthn: Missing rp.id in options");
+    throw new Error("Registration failed: Missing RP data");
+  }
+
   try {
-    return await startRegistration({
+    console.log(
+      "Safari WebAuthn: Calling startRegistration with prepared options"
+    );
+
+    // First try with SimpleWebAuthn's implementation
+    const result = await startRegistration({
       optionsJSON: options as PublicKeyCredentialCreationOptionsJSON,
     });
+
+    console.log(
+      "Safari WebAuthn: Registration successful!",
+      result ? `Credential ID: ${result.id.substring(0, 8)}...` : "No result"
+    );
+
+    return result;
   } catch (error) {
-    console.error("Safari registration error:", error);
-    throw error;
+    console.error("Safari WebAuthn: Registration error:", error);
+
+    // Try a last-resort fallback approach for Safari
+    try {
+      console.log("Safari WebAuthn: Trying direct WebAuthn API as fallback");
+
+      // Create a native PublicKeyCredentialCreationOptions
+      const nativeOptions: PublicKeyCredentialCreationOptions = {
+        challenge: base64URLToUint8Array(options.challenge),
+        rp: options.rp,
+        user: {
+          id: base64URLToUint8Array(options.user.id),
+          name: options.user.name,
+          displayName: options.user.displayName,
+        },
+        pubKeyCredParams: options.pubKeyCredParams.map((param) => ({
+          type: "public-key",
+          alg: param.alg,
+        })),
+        timeout: options.timeout,
+        attestation: options.attestation as AttestationConveyancePreference,
+        authenticatorSelection: options.authenticatorSelection,
+      };
+
+      console.log(
+        "Safari WebAuthn: Calling native navigator.credentials.create()"
+      );
+      const credential = (await navigator.credentials.create({
+        publicKey: nativeOptions,
+      })) as PublicKeyCredential;
+
+      if (!credential) {
+        throw new Error("No credential returned from WebAuthn API");
+      }
+
+      console.log(
+        "Safari WebAuthn: Native API successful, formatting response"
+      );
+
+      // Format the credential as expected by the server
+      const response = credential.response as AuthenticatorAttestationResponse;
+      const clientDataJSON = arrayBufferToBase64(response.clientDataJSON);
+      const attestationObject = arrayBufferToBase64(response.attestationObject);
+
+      return {
+        id: credential.id,
+        rawId: credential.id,
+        response: {
+          clientDataJSON,
+          attestationObject,
+        },
+        authenticatorAttachment: credential.authenticatorAttachment as
+          | AuthenticatorAttachment
+          | undefined,
+        clientExtensionResults: credential.getClientExtensionResults(),
+        type: "public-key",
+      };
+    } catch (fallbackError) {
+      console.error("Safari WebAuthn: Fallback also failed:", fallbackError);
+      throw new Error(
+        `Safari registration failed: ${
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : "Unknown error"
+        }`
+      );
+    }
   }
 }
 
@@ -108,16 +250,122 @@ export async function safariStartAuthentication(
   options: WebAuthnOptions
 ): Promise<AuthenticationResponseJSON> {
   console.log(
-    "Using Safari-specific authentication flow with direct user gesture handling"
+    "Safari WebAuthn: Starting authentication with options:",
+    JSON.stringify(
+      {
+        rpId: options.rp.id,
+        timeout: options.timeout,
+        userVerification: options.authenticatorSelection?.userVerification,
+        allowCredentials: options.excludeCredentials
+          ? `${options.excludeCredentials.length} credentials`
+          : "none",
+      },
+      null,
+      2
+    )
   );
 
+  // Validate key properties
+  if (!options.challenge) {
+    console.error("Safari WebAuthn: Missing challenge in auth options");
+    throw new Error("Authentication failed: Missing challenge");
+  }
+
+  if (!options.rp || !options.rp.id) {
+    console.error("Safari WebAuthn: Missing rp.id in auth options");
+    throw new Error("Authentication failed: Missing RP data");
+  }
+
   try {
-    return await startAuthentication({
+    console.log(
+      "Safari WebAuthn: Calling startAuthentication with SimpleWebAuthn"
+    );
+    // First try with SimpleWebAuthn's implementation
+    const result = await startAuthentication({
       optionsJSON: options as PublicKeyCredentialRequestOptionsJSON,
     });
+
+    console.log(
+      "Safari WebAuthn: Authentication successful with SimpleWebAuthn"
+    );
+    return result;
   } catch (error) {
-    console.error("Safari authentication error:", error);
-    throw error;
+    console.error(
+      "Safari WebAuthn: Authentication error with SimpleWebAuthn:",
+      error
+    );
+
+    // Try a direct WebAuthn API fallback for Safari
+    try {
+      console.log(
+        "Safari WebAuthn: Trying direct WebAuthn API fallback for authentication"
+      );
+
+      // Ensure we have sensible defaults for all parameters
+      const timeout =
+        typeof options.timeout === "number" ? options.timeout : 60000;
+
+      // Create native PublicKeyCredentialRequestOptions
+      const nativeOptions: PublicKeyCredentialRequestOptions = {
+        challenge: base64URLToUint8Array(options.challenge),
+        rpId: options.rp.id,
+        timeout: timeout, // Using the safe timeout value
+        userVerification:
+          (options.authenticatorSelection
+            ?.userVerification as UserVerificationRequirement) || "preferred",
+        allowCredentials:
+          options.excludeCredentials?.map((cred) => ({
+            id: base64URLToUint8Array(cred.id),
+            type: "public-key",
+            transports: cred.transports as AuthenticatorTransport[],
+          })) || [],
+      };
+
+      console.log(
+        "Safari WebAuthn: Calling native navigator.credentials.get()"
+      );
+      const credential = (await navigator.credentials.get({
+        publicKey: nativeOptions,
+      })) as PublicKeyCredential;
+
+      if (!credential) {
+        throw new Error("No credential returned from WebAuthn API");
+      }
+
+      console.log(
+        "Safari WebAuthn: Native API successful, formatting response"
+      );
+
+      // Format the credential as expected by SimpleWebAuthn
+      const response = credential.response as AuthenticatorAssertionResponse;
+
+      return {
+        id: credential.id,
+        rawId: credential.id,
+        response: {
+          clientDataJSON: arrayBufferToBase64(response.clientDataJSON),
+          authenticatorData: arrayBufferToBase64(response.authenticatorData),
+          signature: arrayBufferToBase64(response.signature),
+          userHandle: response.userHandle
+            ? arrayBufferToBase64(response.userHandle)
+            : undefined,
+        },
+        clientExtensionResults: credential.getClientExtensionResults(),
+        type: "public-key",
+      };
+    } catch (fallbackError) {
+      console.error(
+        "Safari WebAuthn: Authentication fallback also failed:",
+        fallbackError
+      );
+      throw new Error(
+        `Safari authentication failed: ${
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : "Unknown error"
+        }`
+      );
+    }
   }
 }
 
@@ -397,29 +645,6 @@ function parseBase64URLChallenge(challenge: string): Uint8Array {
 }
 
 /**
- * Convert a base64URL string to a Uint8Array
- */
-function base64URLToUint8Array(base64url: string): Uint8Array {
-  console.log("Converting base64url to Uint8Array, length:", base64url.length);
-  // Convert base64url to base64
-  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const base64Padded = base64 + padding;
-
-  // Create binary string from base64
-  const binary = atob(base64Padded);
-
-  // Convert to Uint8Array
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  console.log("Converted to Uint8Array, length:", bytes.length);
-  return bytes;
-}
-
-/**
  * Parse a base64URL-encoded ID into a Uint8Array
  */
 function parseBase64URLId(id: string): Uint8Array {
@@ -440,16 +665,4 @@ function getTransports(
     (transport): transport is AuthenticatorTransportFuture =>
       ["ble", "hybrid", "internal", "nfc", "usb"].includes(transport)
   );
-}
-
-/**
- * Convert an ArrayBuffer to a base64 string
- */
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
 }

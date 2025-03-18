@@ -168,66 +168,87 @@ export function NewDeviceRegistration({
     }
 
     try {
-      console.log("Starting registration with browser-specific implementation");
-      console.log(
-        "Browser detected:",
-        isSafari ? "Safari" : isChrome ? "Chrome" : "Other"
-      );
+      console.log("Starting new device registration flow");
+      setIsRegistering(true);
+      setIsPreparingOptions(true);
 
-      // Use browser-specific implementations
-      let attResp;
+      // We already have options and challengeId passed to this function,
+      // so we don't need to fetch them again
+      console.log("Using provided registration options");
 
-      // Ensure required properties are present
+      console.log("Browser info:", getBrowserInfo());
+      const { browser } = getBrowserInfo();
+
+      console.log("Preparing WebAuthn options for browser:", browser);
+
+      // Log the actual options
+      console.log("WebAuthn options:", {
+        rp: options.rp,
+        user: {
+          id: options.user?.id,
+          name: options.user?.name,
+        },
+        challenge: options.challenge
+          ? options.challenge.substring(0, 10) + "..."
+          : "undefined",
+        pubKeyCredParams: options.pubKeyCredParams,
+        timeout: options.timeout,
+        authenticatorSelection: options.authenticatorSelection,
+      });
+
+      setIsPreparingOptions(false);
+      setIsRegistering(true);
+
+      let credential;
+
+      console.log("Initializing WebAuthn registration", { browser });
+
+      // Ensure options has the required properties for WebAuthn
       const webAuthnOptions: WebAuthnOptions = {
         ...options,
         rp: {
           ...options.rp,
-          id: options.rp.id || window.location.hostname,
+          id: options.rp?.id || window.location.hostname,
         },
         challenge: options.challenge || "",
         user: {
           ...options.user,
-          id: options.user.id || "",
-          name: options.user.name || "",
-          displayName: options.user.displayName || "",
+          id: options.user?.id || "",
+          name: options.user?.name || "",
+          displayName: options.user?.displayName || "",
         },
-        pubKeyCredParams: options.pubKeyCredParams.map((param) => ({
-          type: "public-key" as const,
-          alg: param.alg,
-        })),
+        pubKeyCredParams:
+          options.pubKeyCredParams?.map((param) => ({
+            type: "public-key" as const,
+            alg: param.alg,
+          })) || [],
       };
 
-      // For Safari, we need to call the WebAuthn function directly within the click handler
-      if (isSafari) {
-        console.log(
-          "Using Safari-specific registration flow - direct WebAuthn call"
-        );
-        attResp = await safariStartRegistration(webAuthnOptions);
-      } else if (isChrome) {
-        console.log("Using Chrome-specific registration flow");
-        attResp = await chromeStartRegistration(webAuthnOptions);
+      if (browser === "Safari") {
+        console.log("Using Safari-specific implementation");
+        credential = await safariStartRegistration(webAuthnOptions);
+      } else if (browser === "Chrome") {
+        console.log("Using Chrome-specific implementation");
+        credential = await chromeStartRegistration(webAuthnOptions);
       } else {
-        console.log("Using standard registration flow");
-        attResp = await startRegistration({ optionsJSON: options });
+        console.log("Using generic WebAuthn implementation");
+        credential = await startRegistration({
+          optionsJSON: options,
+        });
       }
 
-      console.log("Registration successful, verifying with server");
-      console.log("Credential response type:", typeof attResp);
-      console.log("Credential ID:", attResp.id);
-      console.log("Browser/Device:", browserInfo.browser, deviceType);
+      console.log(
+        "WebAuthn registration successful:",
+        credential ? "Yes" : "No"
+      );
+      console.log("Credential ID:", credential?.id?.substring(0, 10) + "...");
 
-      // Prepare detailed browser and device info for accurate device recognition
-      const deviceDetails = {
-        browser: browserInfo.browser,
-        version: browserInfo.version,
-        os: browserInfo.os,
-        deviceType: deviceType,
-        userAgent: navigator.userAgent,
-        name: getDeviceName(),
-      };
+      if (!credential) {
+        throw new Error("No credential returned from WebAuthn API");
+      }
 
-      // Verify the registration with the server using the new utility
-      const verifyData = await apiRequest<{ user: User }>(
+      console.log("Sending verification to server...");
+      const verificationResponse = await apiRequest<{ user: User }>(
         "/api/auth/register/verify",
         {
           method: "POST",
@@ -235,24 +256,60 @@ export function NewDeviceRegistration({
           body: JSON.stringify({
             userId,
             challengeId: chId,
-            credential: attResp,
+            credential: credential,
             deviceType,
-            browserInfo: deviceDetails,
+            browserInfo: getBrowserInfo(),
           }),
         }
       );
 
-      console.log("Registration verified successfully");
+      console.log("Verification response:", verificationResponse);
 
-      // Close the device registration and call the success callback
-      onSuccess(verifyData.user);
+      // Assuming the server returns { user: User } on success
+      if (!verificationResponse?.user) {
+        console.error("Verification failed:", verificationResponse);
+        throw new Error("Verification failed on server");
+      }
+
+      console.log("Registration complete");
+      onSuccess(verificationResponse.user);
     } catch (error) {
-      console.error("Registration error:", error);
-      onError(
-        error instanceof Error ? error : new Error("Registration failed")
-      );
-    } finally {
+      setIsPreparingOptions(false);
       setIsRegistering(false);
+
+      // Detailed error logging
+      console.error("Registration error:", error);
+
+      if (error instanceof Error) {
+        console.error("Error name:", error.name);
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+
+        // Check for specific WebAuthn errors
+        if (error.name === "NotAllowedError") {
+          onError(
+            new Error(
+              "Registration was cancelled or timed out. Please try again."
+            )
+          );
+        } else if (error.name === "SecurityError") {
+          onError(
+            new Error(
+              "A security error occurred. Please ensure you're using HTTPS."
+            )
+          );
+        } else if (error.name === "NotSupportedError") {
+          onError(
+            new Error(
+              "Your browser or device doesn't support WebAuthn. Please try a different browser."
+            )
+          );
+        } else {
+          onError(error);
+        }
+      } else {
+        onError(new Error("An unknown error occurred during registration"));
+      }
     }
   };
 

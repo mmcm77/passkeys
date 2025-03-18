@@ -9,7 +9,10 @@ import {
 import { verifyChallenge, removeChallenge } from "@/lib/auth/challenge-manager";
 import { createSession } from "@/lib/auth/session";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
-import { updateDeviceCredentialUsage } from "@/lib/db/device-credentials";
+import {
+  updateDeviceCredentialUsage,
+  generateDeviceToken,
+} from "@/lib/db/device-credentials";
 import { logger } from "@/lib/api/logger";
 import { config } from "@/lib/config";
 import { type AuthenticationResponseJSON } from "@simplewebauthn/browser";
@@ -18,6 +21,7 @@ import {
   verifyAuthenticationResponse,
   type VerifiedAuthenticationResponse,
 } from "@simplewebauthn/server";
+import { cookies } from "next/headers";
 
 // Create a scoped logger
 const authVerifyLogger = logger.scope("AuthVerify");
@@ -70,40 +74,154 @@ interface VerifyAuthResponse {
 
 export async function POST(
   request: NextRequest
-): Promise<NextResponse<VerifyAuthResponse>> {
+): Promise<NextResponse<VerifyResponseData | VerifyErrorResponse>> {
   try {
-    const body = (await request.json()) as {
-      response: AuthenticationResponseJSON;
-      challenge: string;
-      credential: {
-        id: string;
-        publicKey: string;
-        counter: number;
-      };
+    // Parse the request body
+    const { credential, challengeId } =
+      (await request.json()) as VerifyRequestData;
+
+    authVerifyLogger.log("Authentication verification request received");
+    authVerifyLogger.debug("Request data:", {
+      credentialId: credential.id,
+      challengeId,
+    });
+
+    // Verify challenge
+    const challengeResult = await verifyChallenge(challengeId);
+    if (!challengeResult || !challengeResult.challenge) {
+      authVerifyLogger.warn("Challenge verification failed", { challengeId });
+      return NextResponse.json({ error: "Invalid challenge" }, { status: 400 });
+    }
+
+    // Extract challenge data
+    const challengeData = (challengeResult.data as ChallengeData) || {};
+    authVerifyLogger.debug("Challenge data:", challengeData);
+
+    // Get user information from challenge data or credential
+    let user: User | null = null;
+    if (challengeData.userId) {
+      user = await getUserById(challengeData.userId);
+    }
+
+    // Get credential from database
+    const credentialId = credential.id;
+    const existingCredential = await getCredentialByCredentialId(credentialId);
+
+    if (!existingCredential) {
+      authVerifyLogger.warn("Credential not found", { credentialId });
+      return NextResponse.json(
+        { error: "Credential not found" },
+        { status: 400 }
+      );
+    }
+
+    // If we found a credential but no user, get the user from the credential
+    if (!user && existingCredential.userId) {
+      user = await getUserById(existingCredential.userId);
+    }
+
+    if (!user) {
+      authVerifyLogger.warn("User not found for credential", {
+        credentialId,
+        userId: existingCredential.userId,
+      });
+      return NextResponse.json({ error: "User not found" }, { status: 400 });
+    }
+
+    // Adapt credential to StoredCredential format
+    const storedCredential = {
+      credentialID: existingCredential.credentialId,
+      credentialPublicKey: existingCredential.credentialPublicKey,
+      counter: existingCredential.counter,
     };
 
-    const verification = await verifyAuthenticationResponse({
-      response: body.response,
-      expectedChallenge: body.challenge,
-      expectedOrigin: process.env.NEXT_PUBLIC_ORIGIN!,
-      expectedRPID: process.env.NEXT_PUBLIC_RP_ID!,
-      credential: {
-        id: body.credential.id,
-        publicKey: isoBase64URL.toBuffer(body.credential.publicKey),
-        counter: body.credential.counter,
-      },
-    });
+    // Verify the authentication
+    const verification = await verifyWebAuthnAuthentication(
+      credential,
+      challengeResult.challenge,
+      storedCredential
+    );
 
-    return NextResponse.json({
-      verified: verification.verified,
-      authenticationInfo: verification,
-    });
+    // Update usage info
+    if (verification.verified) {
+      await updateDeviceCredentialUsage(user.id, credentialId);
+
+      // Create a new session
+      await createSession(user.id);
+
+      // Generate a device token and store it
+      try {
+        const deviceToken = await generateDeviceToken(user.id, credentialId);
+
+        // Create response with the token in a cookie
+        const response = NextResponse.json({
+          authenticated: true,
+          user: {
+            id: user.id,
+            email: user.email,
+            displayName: user.displayName,
+            credentialId: existingCredential.credentialId,
+          },
+        });
+
+        // Set secure HTTP-only cookie with the device token
+        response.cookies.set({
+          name: "device_token",
+          value: deviceToken,
+          httpOnly: true,
+          secure: true,
+          sameSite: "strict",
+          // 30 days expiration
+          maxAge: 30 * 24 * 60 * 60,
+          path: "/",
+        });
+
+        // Clean up the challenge
+        await removeChallenge(challengeId);
+
+        authVerifyLogger.log("Authentication successful with device token", {
+          userId: user.id,
+          email: user.email,
+        });
+
+        return response;
+      } catch (tokenError) {
+        // Log but continue if token generation fails
+        authVerifyLogger.error("Failed to generate device token:", tokenError);
+
+        // Clean up the challenge
+        await removeChallenge(challengeId);
+
+        // Return success without device token
+        return NextResponse.json({
+          authenticated: true,
+          user: {
+            id: user.id,
+            email: user.email,
+            displayName: user.displayName,
+            credentialId: existingCredential.credentialId,
+          },
+        });
+      }
+    } else {
+      authVerifyLogger.warn("Authentication failed", {
+        verification,
+        userId: user.id,
+      });
+
+      return NextResponse.json(
+        { error: "Authentication failed", authenticated: false },
+        { status: 400 }
+      );
+    }
   } catch (error) {
-    console.error("Error verifying authentication:", error);
+    const err = error as Error;
+    authVerifyLogger.error("Error in authentication verification:", err);
+
     return NextResponse.json(
       {
-        verified: false,
-        error: "Failed to verify authentication",
+        error: err.message,
+        stack: config.env.isDevelopment ? err.stack : undefined,
       },
       { status: 500 }
     );

@@ -8,14 +8,7 @@ import { getUserById } from "@/lib/db/users";
 // Create a scoped logger for this route
 const passkeyLogger = logger.scope("PasskeysAPI");
 
-interface PasskeyResponse {
-  options: PublicKeyCredentialCreationOptionsJSON;
-  error?: string;
-}
-
-export async function GET(
-  request: Request
-): Promise<NextResponse<PasskeyResponse>> {
+export async function GET(request: Request): Promise<NextResponse> {
   try {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get("userId");
@@ -23,7 +16,6 @@ export async function GET(
     if (!userId) {
       return NextResponse.json(
         {
-          options: {} as PublicKeyCredentialCreationOptionsJSON,
           error: "User ID is required",
         },
         { status: 400 }
@@ -73,25 +65,18 @@ export async function GET(
       passkeyLogger.debug("No duplicate credential IDs found");
     }
 
-    // Generate passkey options
-    const user = await getUserById(userId);
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    const options = await generateWebAuthnRegistrationOptions(
-      userId,
-      user.email,
-      user.displayName || user.email
-    );
-
-    return NextResponse.json({ options });
+    // Return passkeys data in the expected format
+    return NextResponse.json({
+      passkeys: passkeys,
+      count: passkeys.length,
+      uniqueCount: credentialIds.size,
+      hasDuplicates: duplicates.length > 0,
+    });
   } catch (error) {
     passkeyLogger.error("Error retrieving passkeys:", error);
     return NextResponse.json(
       {
-        options: {} as PublicKeyCredentialCreationOptionsJSON,
-        error: "Failed to generate passkey options",
+        error: "Failed to retrieve passkeys",
       },
       { status: 500 }
     );

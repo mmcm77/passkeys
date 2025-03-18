@@ -91,6 +91,7 @@ export interface Database {
           };
           created_at: number;
           last_used_at: number;
+          device_token?: string;
         };
         Insert: {
           id?: string;
@@ -107,6 +108,7 @@ export interface Database {
           };
           created_at?: number;
           last_used_at?: number;
+          device_token?: string;
         };
         Update: {
           id?: string;
@@ -123,6 +125,7 @@ export interface Database {
           };
           created_at?: number;
           last_used_at?: number;
+          device_token?: string;
         };
       };
       challenges: {

@@ -121,15 +121,23 @@ export async function storeDeviceCredential(
     console.log(`Storing new device credential for user ${userId}`);
     console.log(`Credential ID: ${credentialId}`);
     console.log(`Device type: ${detectDeviceType()}`);
+    console.log(`Browser info:`, JSON.stringify(browserInfo, null, 2));
     console.log(`Browser: ${browserInfo.browser} ${browserInfo.version}`);
+    console.log(`OS: ${browserInfo.os}`);
     console.log(`Device name: ${generatedDeviceName}`);
 
+    // Ensure we don't end up with "Unknown Unknown" by providing better defaults
+    const finalDeviceName = generatedDeviceName.includes("Unknown Unknown")
+      ? "Device " + credentialId.substring(0, 8)
+      : generatedDeviceName;
+
     const deviceDetails: DeviceDetails = {
-      browser: browserInfo.browser,
-      version: browserInfo.version,
-      os: browserInfo.os,
+      browser:
+        browserInfo.browser !== "Unknown" ? browserInfo.browser : "Browser",
+      version: browserInfo.version !== "Unknown" ? browserInfo.version : "",
+      os: browserInfo.os !== "Unknown" ? browserInfo.os : "Device",
       deviceType: detectDeviceType(),
-      deviceName: generatedDeviceName,
+      deviceName: finalDeviceName,
       ...fingerprintResponse.components,
     };
 
@@ -420,4 +428,122 @@ export async function getDeviceCredential(
     lastUsedAt: data.last_used_at,
     isCurrentDevice: data.device_fingerprint === browserSpecificFingerprint,
   };
+}
+
+// Generate and store a device token for a credential
+export async function generateDeviceToken(
+  userId: string,
+  credentialId: string
+): Promise<string> {
+  try {
+    // Generate a random token (32 bytes = 64 hex chars)
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const deviceToken = Array.from(tokenBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    console.log(
+      `Generating device token for credential ${credentialId.substring(
+        0,
+        8
+      )}...`
+    );
+
+    // Find the device credential
+    const { data: deviceCredentials, error: findError } = await supabase
+      .from("device_credentials")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("credential_id", credentialId)
+      .returns<Pick<DbDeviceCredential, "id">[]>();
+
+    if (findError) {
+      console.error("Error finding device credential:", findError);
+      throw findError;
+    }
+
+    if (!deviceCredentials || deviceCredentials.length === 0) {
+      throw new Error("Device credential not found");
+    }
+
+    const deviceCredentialId = deviceCredentials[0].id;
+
+    // Update the device credential with the token
+    const { error: updateError } = await supabase
+      .from("device_credentials")
+      .update({
+        device_token: deviceToken,
+        last_used_at: Date.now(),
+      })
+      .eq("id", deviceCredentialId);
+
+    if (updateError) {
+      console.error("Error updating device token:", updateError);
+      throw updateError;
+    }
+
+    console.log("Successfully stored device token");
+    return deviceToken;
+  } catch (error) {
+    console.error("Error generating device token:", error);
+    throw error;
+  }
+}
+
+// Find a credential by device token
+export async function findCredentialByDeviceToken(
+  deviceToken: string
+): Promise<DeviceCredential | null> {
+  try {
+    console.log("Looking up credential by device token...");
+
+    const { data: deviceCredentials, error } = await supabase
+      .from("device_credentials")
+      .select("*")
+      .eq("device_token", deviceToken)
+      .returns<DbDeviceCredential[]>();
+
+    if (error) {
+      console.error("Error finding credential by device token:", error);
+      throw error;
+    }
+
+    if (!deviceCredentials || deviceCredentials.length === 0) {
+      console.log("No credential found for device token");
+      return null;
+    }
+
+    const deviceCred = deviceCredentials[0];
+    if (!deviceCred) {
+      console.log("Device credential is undefined");
+      return null;
+    }
+
+    console.log(
+      `Found credential for device token: ${deviceCred.credential_id.substring(
+        0,
+        8
+      )}`
+    );
+
+    // Map DB credential to DeviceCredential type with proper null checks
+    const details = (deviceCred.device_details as DeviceDetails) || {};
+
+    return {
+      credentialId: deviceCred.credential_id,
+      userId: deviceCred.user_id,
+      deviceType: details.deviceType || "desktop",
+      deviceName: details.deviceName || "Unknown Device",
+      browser: details.browser || "Unknown",
+      os: details.os || "Unknown",
+      userAgent: details.userAgent || "",
+      createdAt: deviceCred.created_at,
+      lastUsedAt: deviceCred.last_used_at,
+      isCurrentDevice: true,
+    };
+  } catch (error) {
+    console.error("Error finding credential by device token:", error);
+    return null;
+  }
 }

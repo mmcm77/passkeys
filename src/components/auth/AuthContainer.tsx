@@ -27,6 +27,7 @@ import {
   storeDeviceCredential,
   getCredentialsForCurrentDevice,
   updateDeviceCredentialUsage,
+  findCredentialByDeviceToken,
 } from "@/lib/db/device-credentials";
 import { getUserWithCredentials, getUserByEmail } from "@/lib/db/users";
 import { PasskeyLoginButton } from "./PasskeyLoginButton";
@@ -45,6 +46,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { apiRequest } from "@/lib/api/client-helpers";
+import { Smartphone } from "lucide-react";
 
 type AuthState =
   | "initial"
@@ -388,7 +390,25 @@ export default function AuthContainer({
 
   // Handle mode change
   const handleModeChange = () => {
+    // Reset error state when changing modes
+    setError(null);
+
+    // Set to initial auth state to ensure form is shown
+    setAuthState("initial");
+
+    // Reset auth flow to default
+    setAuthFlow("default");
+
+    // Toggle between signin and register modes
     setMode(mode === "signin" ? "register" : "signin");
+
+    // Don't clear the email when switching modes if we want to preserve device recognition
+    // Only reset other form state
+
+    // Clear any selected user or specific states
+    setSelectedUser(null);
+    setShowNewDeviceRegistration(false);
+    setUserForNewDevice(null);
   };
 
   // Handle error
@@ -443,11 +463,18 @@ export default function AuthContainer({
     }
 
     if (authState === "initial") {
+      console.log(
+        "Auth state: initial, Device recognized:",
+        deviceRecognized,
+        "Email:",
+        email
+      );
+
       return (
         <>
           <div className="space-y-4">
-            {!deviceRecognized && (
-              // Show standard form when device is not recognized
+            {/* Always show email input field in registration mode regardless of device recognition */}
+            {(mode === "register" || !deviceRecognized) && (
               <Form {...form}>
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <FormField
@@ -480,14 +507,9 @@ export default function AuthContainer({
               </Form>
             )}
 
-            {/* Show passkey login button if device is recognized */}
-            {deviceRecognized && !isCheckingDevice && (
+            {/* Show passkey login button if device is recognized and in sign-in mode */}
+            {deviceRecognized && mode === "signin" && !isCheckingDevice && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between text-sm mb-1">
-                  <span className="text-muted-foreground">Signing in as:</span>
-                  <span className="font-medium">{email}</span>
-                </div>
-
                 <PasskeyLoginButton
                   email={email}
                   onSuccess={(user) => {
@@ -528,7 +550,6 @@ export default function AuthContainer({
                     addRecentEmail(user.email);
                   }}
                   onError={handleError}
-                  buttonStyle="simplified"
                 />
 
                 <AccountSwitcher
@@ -711,30 +732,134 @@ export default function AuthContainer({
   };
 
   // Helper functions for title and description
-  const renderAuthTitle = () => {
+  const renderAuthTitle = (): string => {
     if (authFlow === "newDevice") return "New Device Detected";
     if (authFlow === "passwordFallback") return "Alternative Sign In";
 
     if (authState === "authenticated") return "Welcome";
     if (authState === "registering") return "Create Account";
 
-    return mode === "signin" ? "Welcome back" : "Create an account";
+    // Show appropriate title based on mode and device recognition
+    if (mode === "signin") {
+      return deviceRecognized ? "Welcome back" : "Sign in";
+    } else {
+      return "Create an account";
+    }
   };
 
-  const renderAuthDescription = () => {
+  const renderAuthDescription = (): string => {
     if (authFlow === "newDevice")
       return "Set up this device for faster sign-in";
     if (authFlow === "passwordFallback") return "Choose another way to sign in";
 
     if (authState === "authenticated")
-      return `Signed in as ${authenticatedUser?.email}`;
+      return `Signed in as ${authenticatedUser?.email || ""}`;
     if (authState === "registering")
       return "Set up your passkey for secure access";
 
-    return mode === "signin"
-      ? "Sign in to your account"
-      : "Create a new account with a passkey";
+    // Show appropriate description based on mode and device recognition
+    if (mode === "signin") {
+      return deviceRecognized
+        ? `Continue with your passkey for ${email}`
+        : "Sign in to your account";
+    } else {
+      return "Create a new account with a passkey";
+    }
   };
+
+  // Add this function to check for device tokens
+  const checkForDeviceToken = async (): Promise<boolean> => {
+    try {
+      // Try to get the device token from cookies
+      const cookies = document.cookie.split(";");
+      const deviceTokenCookie = cookies.find((cookie) =>
+        cookie.trim().startsWith("device_token=")
+      );
+
+      if (!deviceTokenCookie) {
+        console.log("No device token cookie found");
+        return false;
+      }
+
+      const deviceToken = deviceTokenCookie.split("=")[1]?.trim();
+      if (!deviceToken) {
+        console.log("Empty device token");
+        return false;
+      }
+
+      console.log("Found device token, checking if valid...");
+
+      // Check if the token is associated with a credential
+      const credential = await findCredentialByDeviceToken(deviceToken);
+      if (!credential) {
+        console.log("No credential found for device token");
+        return false;
+      }
+
+      console.log("Device recognized:", credential.deviceName);
+
+      // Store information about the recognized device
+      // The component should have state variables for these, or you can add them
+      // setRecognizedDevice(true);
+      // setRecognizedDeviceName(credential.deviceName);
+
+      return true;
+    } catch (error) {
+      console.error("Error checking device token:", error);
+      return false;
+    }
+  };
+
+  // Add new state variables for device recognition
+  const [isDeviceRecognized, setIsDeviceRecognized] = useState(false);
+  const [recognizedDeviceName, setRecognizedDeviceName] = useState<
+    string | null
+  >(null);
+
+  // Add useEffect to check for device token on component mount
+  useEffect(() => {
+    const checkDeviceToken = async () => {
+      try {
+        // Try to get the device token from cookies
+        const cookies = document.cookie.split(";");
+        const deviceTokenCookie = cookies.find((cookie) =>
+          cookie.trim().startsWith("device_token=")
+        );
+
+        if (!deviceTokenCookie) {
+          return;
+        }
+
+        const deviceToken = deviceTokenCookie.split("=")[1]?.trim();
+        if (!deviceToken) {
+          return;
+        }
+
+        console.log("Found device token, checking if valid...");
+
+        // Check if the token is associated with a credential
+        const credential = await findCredentialByDeviceToken(deviceToken);
+        if (!credential) {
+          return;
+        }
+
+        console.log("Device recognized:", credential.deviceName);
+
+        // Update UI to show the recognized device
+        setIsDeviceRecognized(true);
+        setRecognizedDeviceName(credential.deviceName);
+
+        // You can prefill the email if needed or auto-authenticate
+        // if (currentFlow === "login" && !email) {
+        //   setEmail(userEmail);
+        // }
+      } catch (error) {
+        console.error("Error checking device token:", error);
+      }
+    };
+
+    void checkDeviceToken();
+  }, []);
 
   return (
     <Card className="w-full max-w-md mx-auto">
