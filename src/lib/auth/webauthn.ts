@@ -19,15 +19,37 @@ import { AuthenticatorTransportFuture } from "@/types/webauthn";
 
 // Get the Relying Party ID based on environment
 export function getRpId(): string {
+  // Use environment variable NEXT_PUBLIC_RP_ID if available
+  if (process.env.NEXT_PUBLIC_RP_ID) {
+    return process.env.NEXT_PUBLIC_RP_ID;
+  }
+
+  // Fall back to NEXT_PUBLIC_DOMAIN
+  if (process.env.NEXT_PUBLIC_DOMAIN) {
+    return process.env.NEXT_PUBLIC_DOMAIN;
+  }
+
+  // Default fallback based on environment
   return process.env.NODE_ENV === "production"
-    ? process.env.NEXT_PUBLIC_DOMAIN || "your-domain.com"
+    ? "your-domain.com"
     : "localhost";
 }
 
 // Get the expected origin based on environment
 export function getExpectedOrigin(): string {
+  // Use environment variable NEXT_PUBLIC_ORIGIN if available
+  if (process.env.NEXT_PUBLIC_ORIGIN) {
+    return process.env.NEXT_PUBLIC_ORIGIN;
+  }
+
+  // Fall back to constructing from domain
+  if (process.env.NEXT_PUBLIC_DOMAIN) {
+    return `https://${process.env.NEXT_PUBLIC_DOMAIN}`;
+  }
+
+  // Default fallback based on environment
   return process.env.NODE_ENV === "production"
-    ? `https://${process.env.NEXT_PUBLIC_DOMAIN || "your-domain.com"}`
+    ? "https://your-domain.com"
     : "http://localhost:3000";
 }
 
