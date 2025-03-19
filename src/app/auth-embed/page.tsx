@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import AuthContainer from "@/components/auth/AuthContainer";
 import { useSearchParams } from "next/navigation";
 import { MessageType } from "@/sdk/types";
 import { AuthenticatedUser } from "@/app/types";
 
-export default function AuthEmbedPage() {
+// Create a client component that uses the search params
+function AuthEmbedContent() {
   const searchParams = useSearchParams();
   const merchantId = searchParams.get("merchantId");
   const sessionId = searchParams.get("sessionId");
@@ -129,5 +130,14 @@ export default function AuthEmbedPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// Main component with Suspense boundary
+export default function AuthEmbedPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-center">Loading...</div>}>
+      <AuthEmbedContent />
+    </Suspense>
   );
 }
