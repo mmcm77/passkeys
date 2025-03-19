@@ -11,17 +11,43 @@ export class IframeManager {
   private options: PasskeySDKOptions;
   private iframeSrc: string;
 
-  constructor(options: PasskeySDKOptions) {
-    this.options = options;
+  constructor(options: {
+    merchantId: string;
+    serviceUrl: string;
+    messageHandler?: MessageHandler;
+    theme?: string;
+    styles?: PasskeySDKOptions["styles"];
+    apiToken?: string;
+  }) {
+    this.options = options as PasskeySDKOptions;
     const serviceUrl = options.serviceUrl || "https://passkeys-one.vercel.app";
 
-    // Create message handler first to get session ID
-    this.messageHandler = new MessageHandler(serviceUrl);
+    // Use provided message handler or create a new one
+    if (options.messageHandler) {
+      this.messageHandler = options.messageHandler;
+    } else {
+      this.messageHandler = new MessageHandler(serviceUrl);
 
-    // Include merchantId, sessionId, and theme in iframe URL
+      // Add the current origin as trusted automatically
+      if (typeof window !== "undefined" && window.location) {
+        this.messageHandler.addTrustedOrigin(window.location.origin);
+      }
+    }
+
+    // Include merchantId, sessionId, theme, origin, and apiToken in iframe URL
+    const originParam =
+      typeof window !== "undefined" && window.location
+        ? `&origin=${encodeURIComponent(window.location.origin)}`
+        : "";
+
     this.iframeSrc = `${serviceUrl}/auth-embed?merchantId=${encodeURIComponent(
       options.merchantId
-    )}&sessionId=${this.messageHandler.getSessionId()}`;
+    )}&sessionId=${this.messageHandler.getSessionId()}${originParam}`;
+
+    // Add API token if provided
+    if (options.apiToken) {
+      this.iframeSrc += `&apiToken=${encodeURIComponent(options.apiToken)}`;
+    }
 
     if (options.theme) {
       this.iframeSrc += `&theme=${options.theme}`;

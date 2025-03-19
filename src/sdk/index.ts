@@ -17,17 +17,39 @@ export function initPasskeyAuth(
     throw new Error("Passkey SDK requires a merchantId");
   }
 
-  // Set default options
+  // Set default service URL if not provided
+  const serviceUrl = options.serviceUrl || "https://passkeys-one.vercel.app";
+
+  // Set up the SDK options
   const sdkOptions: PasskeySDKOptions = {
-    buttonText: "Sign in with Passkey",
-    buttonStyle: "default",
+    // Default options
     theme: "light",
-    serviceUrl: APP_URL,
+    buttonText: "Authenticate with Passkey",
+    buttonStyle: "default",
+    serviceUrl: serviceUrl, // Ensure serviceUrl is always set
     ...options,
   };
 
-  // Create iframe manager which also creates the message handler
-  const iframeManager = new IframeManager(sdkOptions);
+  // Check if using token-based auth
+  const useTokenAuth = !!sdkOptions.apiToken;
+
+  // Create message handler for iframe communication
+  const messageHandler = new MessageHandler(serviceUrl, useTokenAuth);
+
+  // If we're in a browser, add the current origin as trusted
+  if (typeof window !== "undefined" && window.location) {
+    messageHandler.addTrustedOrigin(window.location.origin);
+  }
+
+  // Create iframe manager
+  const iframeManager = new IframeManager({
+    merchantId: sdkOptions.merchantId,
+    serviceUrl: serviceUrl, // Use the local variable which is guaranteed to be a string
+    messageHandler,
+    theme: sdkOptions.theme || "light",
+    styles: sdkOptions.styles,
+    apiToken: sdkOptions.apiToken, // Pass API token if provided
+  });
 
   // Track internal state
   let buttonElement: HTMLButtonElement | null = null;

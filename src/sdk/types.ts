@@ -4,6 +4,8 @@
 export interface PasskeySDKOptions {
   /** The merchant's unique identifier */
   merchantId: string;
+  /** API token for merchant authorization */
+  apiToken?: string;
   /** URL to your passkey service */
   serviceUrl?: string;
   /** Container CSS selector for button auto-mounting */

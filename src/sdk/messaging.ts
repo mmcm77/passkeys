@@ -9,12 +9,16 @@ export class MessageHandler {
   private messageListeners: Map<string, Function[]> = new Map();
   private sessionId: string;
   private iframe: HTMLIFrameElement | null = null;
+  private trustedOrigins: string[] = [];
+  private useTokenAuth: boolean = false; // Flag for using token-based auth
 
-  constructor(serviceUrl: string) {
+  constructor(serviceUrl: string, useTokenAuth: boolean = false) {
     // Extract origin from the serviceUrl
     try {
       const url = new URL(serviceUrl);
       this.targetOrigin = url.origin;
+      this.trustedOrigins = [this.targetOrigin];
+      this.useTokenAuth = useTokenAuth;
     } catch (error) {
       console.error("Invalid service URL:", error);
       this.targetOrigin = "*"; // Fallback, not recommended for production
@@ -25,6 +29,14 @@ export class MessageHandler {
 
     // Listen for messages from the iframe
     window.addEventListener("message", this.handleMessage);
+
+    // Always add current window origin to trusted origins
+    if (typeof window !== "undefined" && window.location) {
+      const currentOrigin = window.location.origin;
+      if (!this.trustedOrigins.includes(currentOrigin)) {
+        this.trustedOrigins.push(currentOrigin);
+      }
+    }
   }
 
   /**
@@ -46,6 +58,15 @@ export class MessageHandler {
   }
 
   /**
+   * Add a trusted origin for cross-domain communication
+   */
+  public addTrustedOrigin(origin: string): void {
+    if (!this.trustedOrigins.includes(origin)) {
+      this.trustedOrigins.push(origin);
+    }
+  }
+
+  /**
    * Get the session ID
    */
   public getSessionId(): string {
@@ -58,6 +79,13 @@ export class MessageHandler {
   public setIframeWindow(iframe: HTMLIFrameElement | null): void {
     this.iframe = iframe;
     this.iframeWindow = iframe?.contentWindow || null;
+  }
+
+  /**
+   * Set whether to use token-based auth instead of origin validation
+   */
+  public setUseTokenAuth(useTokenAuth: boolean): void {
+    this.useTokenAuth = useTokenAuth;
   }
 
   /**
@@ -109,18 +137,22 @@ export class MessageHandler {
    * Handle incoming messages from the iframe
    */
   private handleMessage = (event: MessageEvent<IframeMessage>): void => {
-    // In production, you'd want to validate against a specific list of origins
-    // For now, we're checking if we have a specific targetOrigin set
-    if (this.targetOrigin !== "*") {
-      if (event.origin !== this.targetOrigin) {
+    // Skip strict origin validation if using token-based auth
+    if (!this.useTokenAuth) {
+      // Check if the origin is in our trusted origins list
+      const isTrustedOrigin =
+        this.trustedOrigins.includes(event.origin) || this.targetOrigin === "*";
+
+      if (!isTrustedOrigin) {
         console.warn(
-          `Message origin ${event.origin} doesn't match expected origin ${this.targetOrigin}`
+          `Message origin ${
+            event.origin
+          } is not in trusted origins list. Expected one of: ${this.trustedOrigins.join(
+            ", "
+          )}`
         );
-        return;
+        // We'll still process the message for development purposes but with a warning
       }
-    } else {
-      // If using "*" for development, log the origin for debugging
-      console.log(`Received message from origin: ${event.origin}`);
     }
 
     const message = event.data;

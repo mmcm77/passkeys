@@ -6,6 +6,7 @@ export default function SDKDocsPage() {
     { id: "introduction", title: "Introduction" },
     { id: "installation", title: "Installation" },
     { id: "merchant-id", title: "Obtaining a Merchant ID" },
+    { id: "test-tokens", title: "Using Test Tokens" },
     { id: "basic-integration", title: "Basic Integration" },
     { id: "mounting-options", title: "Mounting Options" },
     { id: "checkout-flow", title: "Checkout Flow Integration" },
@@ -66,10 +67,13 @@ export default function SDKDocsPage() {
         </section>
 
         <section id="merchant-id" className="mb-10">
-          <h2 className="text-2xl font-bold mb-4">Obtaining a Merchant ID</h2>
+          <h2 className="text-2xl font-bold mb-4">
+            Obtaining a Merchant ID and API Token
+          </h2>
           <p className="mb-4">
             To use the PayAuth SDK, you need a merchant ID that identifies your
-            application. Here's how to get one:
+            application and an optional API token for more secure authorization.
+            Here's how to get them:
           </p>
 
           <h3 className="text-xl font-semibold mt-6 mb-2">For Testing</h3>
@@ -114,9 +118,50 @@ export default function SDKDocsPage() {
               dashboard
             </li>
             <li>
+              Generate an API token from your dashboard to enable token-based
+              authentication
+            </li>
+            <li>
               For high-volume scenarios, contact our support for custom plans
             </li>
           </ol>
+
+          <h3 className="text-xl font-semibold mt-6 mb-2">
+            Authentication Methods
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 my-4">
+            <div className="border rounded-lg p-4">
+              <h4 className="font-semibold text-lg mb-2">
+                Origin-based Authentication
+              </h4>
+              <p className="text-sm mb-3">
+                The default method that validates the parent domain
+              </p>
+              <ul className="list-disc pl-6 text-sm space-y-1">
+                <li>Easier to set up</li>
+                <li>Works with static merchant ID</li>
+                <li>Requires your domain to be whitelisted</li>
+                <li>Limited to specific domains</li>
+              </ul>
+            </div>
+            <div className="border rounded-lg p-4 border-blue-500">
+              <h4 className="font-semibold text-lg mb-2">
+                Token-based Authentication
+              </h4>
+              <p className="text-sm mb-3">
+                Enhanced security model using API tokens
+              </p>
+              <ul className="list-disc pl-6 text-sm space-y-1">
+                <li>Works from any domain or origin</li>
+                <li>No domain whitelisting required</li>
+                <li>Better security through cryptographic validation</li>
+                <li>Tokens can be rotated and revoked</li>
+                <li>
+                  Supports multiple integrations with a single merchant account
+                </li>
+              </ul>
+            </div>
+          </div>
 
           <div className="bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 p-4 my-6">
             <h4 className="font-semibold text-blue-700 dark:text-blue-300">
@@ -124,16 +169,164 @@ export default function SDKDocsPage() {
             </h4>
             <ul className="list-disc pl-6 mt-2 space-y-1 text-sm">
               <li>
-                Never share your production merchant ID in client-side code that
-                could be viewed in public repositories
+                Never share your production merchant ID or API token in
+                client-side code that could be viewed in public repositories
               </li>
               <li>
                 For added security, consider using environment variables for
-                your merchant ID
+                your merchant ID and API token
               </li>
               <li>
-                If your merchant ID is compromised, you can generate a new one
+                If your API token is compromised, you can revoke it immediately
                 from your dashboard
+              </li>
+              <li>
+                Rotate API tokens periodically as a security best practice
+              </li>
+            </ul>
+          </div>
+          <Separator className="my-6" />
+        </section>
+
+        <section id="test-tokens" className="mb-10">
+          <h2 className="text-2xl font-bold mb-4">Using Test Tokens</h2>
+          <p className="mb-4">
+            Test tokens allow you to integrate our SDK from any domain without
+            domain whitelisting. This is especially useful during development
+            and testing phases.
+          </p>
+
+          <h3 className="text-xl font-semibold mt-6 mb-2">Test Token</h3>
+          <div className="bg-slate-100 dark:bg-slate-800 p-4 rounded-md overflow-x-auto my-2 border-l-4 border-yellow-500">
+            <p className="font-medium mb-2">
+              For development and testing only:
+            </p>
+            <code className="block overflow-x-auto text-sm">
+              payauth_test_tk_3f7c9a1b5d8e2f4a6c0b9d8e2f4a6c0b9d8e2f4a
+            </code>
+            <p className="text-sm text-muted-foreground mt-2">
+              ⚠️ This token has a request limit of 500/day and works with any
+              test domain.
+            </p>
+          </div>
+
+          <h3 className="text-xl font-semibold mt-6 mb-2">
+            Implementing Token-based Authentication
+          </h3>
+          <ol className="list-decimal pl-6 space-y-2">
+            <li>
+              Initialize the SDK with both your merchant ID and the API token:
+            </li>
+            <pre className="bg-slate-100 dark:bg-slate-800 p-4 rounded-md overflow-x-auto my-2 text-sm">
+              <code>{`const passkey = PayAuth.init({
+  merchantId: "DEMO_MERCHANT_123",
+  apiToken: "payauth_test_tk_3f7c9a1b5d8e2f4a6c0b9d8e2f4a6c0b9d8e2f4a", // Add test token
+  serviceUrl: "https://passkeys-one.vercel.app",
+  // Other options...
+});`}</code>
+            </pre>
+            <li>
+              The SDK will automatically use token-based authentication when an
+              API token is provided
+            </li>
+            <li>
+              With token-based authentication, you can:
+              <ul className="list-disc pl-6 mt-2 space-y-1">
+                <li>
+                  Integrate from any domain, including localhost or your staging
+                  environments
+                </li>
+                <li>Bypass origin validation for cross-domain communication</li>
+                <li>
+                  Test your integration in various environments without domain
+                  whitelisting
+                </li>
+              </ul>
+            </li>
+          </ol>
+
+          <h3 className="text-xl font-semibold mt-6 mb-2">
+            From Test to Production
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 my-4">
+            <div className="border rounded-lg p-4">
+              <h4 className="font-semibold text-lg mb-2">Development Flow</h4>
+              <ol className="list-decimal pl-6 text-sm space-y-1">
+                <li>Use the demo merchant ID</li>
+                <li>Use the test token provided above</li>
+                <li>Test on any domain or localhost</li>
+                <li>Limited to 500 requests per day</li>
+              </ol>
+            </div>
+            <div className="border rounded-lg p-4">
+              <h4 className="font-semibold text-lg mb-2">Production Flow</h4>
+              <ol className="list-decimal pl-6 text-sm space-y-1">
+                <li>Register for a merchant account</li>
+                <li>Generate a production API token from dashboard</li>
+                <li>Store token securely (use environment variables)</li>
+                <li>Implement proper token rotation for security</li>
+              </ol>
+            </div>
+          </div>
+
+          <h3 className="text-xl font-semibold mt-6 mb-2">
+            Server-Side Token Verification
+          </h3>
+          <p className="mb-2">
+            When using token-based authentication, you should verify tokens on
+            your server:
+          </p>
+          <pre className="bg-slate-100 dark:bg-slate-800 p-4 rounded-md overflow-x-auto my-2 text-sm">
+            <code>{`// Example server-side verification (Node.js)
+app.post('/api/process-payment', async (req, res) => {
+  const { token, email } = req.body;
+  
+  // Verify the authentication token with PayAuth service
+  const verifyResponse = await fetch('https://passkeys-one.vercel.app/api/verify-token', {
+    method: 'POST',
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': \`Bearer \${process.env.PAYAUTH_API_TOKEN}\` // Your merchant API token
+    },
+    body: JSON.stringify({ token })
+  });
+  
+  const result = await verifyResponse.json();
+  
+  if (result.valid) {
+    // Process payment for verified user
+    // ...
+    res.json({ success: true });
+  } else {
+    res.status(401).json({ success: false, error: 'Invalid authentication' });
+  }
+});`}</code>
+          </pre>
+
+          <div className="bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 p-4 my-6">
+            <h4 className="font-semibold text-blue-700 dark:text-blue-300">
+              Best Practices for Token Security
+            </h4>
+            <ul className="list-disc pl-6 mt-2 space-y-1 text-sm">
+              <li>Never hardcode production tokens in client-side code</li>
+              <li>
+                For frontend applications, use environment variables with proper
+                prefixing (NEXT_PUBLIC_* in Next.js)
+              </li>
+              <li>
+                Implement token validation on your server before processing
+                sensitive actions
+              </li>
+              <li>
+                Set up token rotation policies (e.g., rotate every 30-90 days)
+              </li>
+              <li>
+                Create different tokens for different environments (development,
+                staging, production)
+              </li>
+              <li>
+                Monitor token usage for unusual patterns that might indicate
+                compromise
               </li>
             </ul>
           </div>
@@ -149,6 +342,7 @@ export default function SDKDocsPage() {
             <code>{`// Basic initialization
 const passkey = PayAuth.init({
   merchantId: "YOUR_MERCHANT_ID", // Obtain this from PayAuth dashboard
+  apiToken: "YOUR_API_TOKEN",     // Optional: For token-based authentication
   serviceUrl: "https://passkeys-one.vercel.app", // Production PayAuth service URL
   theme: "light", // 'light' or 'dark'
   buttonText: "Pay with Passkey", // Customize button text
