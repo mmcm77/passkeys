@@ -95,6 +95,8 @@ type AuthenticatedUser = {
 interface AuthContainerProps {
   defaultMode?: "signin" | "register";
   onAuthSuccess?: (user: AuthenticatedUser) => void;
+  onAuthError?: (error: Error) => void;
+  isEmbedded?: boolean;
 }
 
 interface ValidationResult {
@@ -207,6 +209,8 @@ interface VerifiedUser {
 export default function AuthContainer({
   defaultMode = "signin",
   onAuthSuccess,
+  onAuthError,
+  isEmbedded = false,
 }: AuthContainerProps): ReactElement {
   // State variables
   const [mode, setMode] = useState<"signin" | "register">(defaultMode);
@@ -381,10 +385,17 @@ export default function AuthContainer({
           setAuthFlow("newDevice");
         }
       }
+
+      if (authState === "authenticated" && authenticatedUser) {
+        onAuthSuccess?.(authenticatedUser);
+      }
+
+      return true;
     } catch (error) {
       console.error("Error during authentication:", error);
       setError("Failed to authenticate. Please try again.");
       handleError(error);
+      return false;
     }
   });
 
@@ -417,6 +428,11 @@ export default function AuthContainer({
     setError(
       error instanceof Error ? error.message : "An unknown error occurred"
     );
+
+    // Call the error handler for embedded mode
+    if (onAuthError && error instanceof Error) {
+      onAuthError(error);
+    }
   };
 
   // Render auth state content
@@ -953,7 +969,7 @@ export default function AuthContainer({
       <CardContent className="space-y-4">
         {error && (
           <div className="bg-destructive/15 text-destructive text-sm p-3 rounded-md">
-            {error}
+            {typeof error === "string" ? error : "An error occurred"}
           </div>
         )}
         {renderAuthFlow()}

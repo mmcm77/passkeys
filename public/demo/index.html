@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PayAuth SDK Demo</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+
+      .product-card {
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+
+      .product-title {
+        margin-top: 0;
+      }
+
+      .price {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #0070f3;
+      }
+
+      .payment-container {
+        margin-top: 20px;
+      }
+
+      #checkout-btn {
+        background-color: #0070f3;
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        font-size: 16px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      #passkey-container {
+        margin-top: 10px;
+      }
+
+      .code-example {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 8px;
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>PayAuth SDK Demo</h1>
+    <p>
+      This page demonstrates how to integrate the PayAuth SDK into your
+      e-commerce site.
+    </p>
+
+    <div class="product-card">
+      <h2 class="product-title">Premium Widget 3000</h2>
+      <p>The ultimate widget for all your needs.</p>
+      <p class="price">$99.99</p>
+
+      <div class="payment-container">
+        <button id="checkout-btn">Checkout with Credit Card</button>
+        <div id="passkey-container"></div>
+      </div>
+    </div>
+
+    <h2>Integration Example</h2>
+    <pre class="code-example">
+&lt;!-- 1. Include the PayAuth SDK --&gt;
+&lt;script src="https://your-domain.com/sdk/payauth.min.js"&gt;&lt;/script&gt;
+
+&lt;!-- 2. Create a container for the button --&gt;
+&lt;div id="passkey-container"&gt;&lt;/div&gt;
+
+&lt;!-- 3. Initialize the SDK --&gt;
+&lt;script&gt;
+  const payAuth = PayAuth.init({
+    merchantId: 'merchant_12345',
+    container: '#passkey-container',
+    theme: 'light',
+    onSuccess: (userData) => {
+      console.log('User authenticated:', userData.email);
+      // Process payment or complete checkout here
+    },
+    onCancel: () => {
+      console.log('Authentication cancelled');
+    },
+    onError: (error) => {
+      console.error('Authentication error:', error);
+    }
+  });
+&lt;/script&gt;
+  </pre
+    >
+
+    <!-- Import PayAuth SDK -->
+    <script src="/sdk/payauth.min.js"></script>
+
+    <script>
+      // Initialize PayAuth after page load
+      document.addEventListener("DOMContentLoaded", () => {
+        // Initialize PayAuth
+        const payAuth = PayAuth.init({
+          merchantId: "demo_merchant_123",
+          container: "#passkey-container",
+          buttonText: "Pay with Passkey",
+          theme: "light",
+          onSuccess: (userData) => {
+            console.log("User authenticated successfully!");
+            console.log("Email:", userData.email);
+            console.log("User ID:", userData.userId);
+
+            // Show success message
+            alert(`Authentication successful! User: ${userData.email}`);
+          },
+          onCancel: () => {
+            console.log("Authentication cancelled by user");
+          },
+          onError: (error) => {
+            console.error("Authentication error:", error);
+          },
+        });
+
+        // Add click handler for regular checkout button
+        document
+          .getElementById("checkout-btn")
+          .addEventListener("click", () => {
+            alert("Regular checkout process would start here");
+          });
+      });
+    </script>
+  </body>
+</html>

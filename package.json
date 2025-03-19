@@ -9,7 +9,9 @@
     "lint": "next lint",
     "lint:strict": "ESLINT_DEBUG=true eslint . --ext .ts,.tsx --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "check": "npm run lint:strict && npm run typecheck"
+    "check": "npm run lint:strict && npm run typecheck",
+    "build:sdk": "webpack --config webpack.sdk.config.js",
+    "build:all": "npm run build && npm run build:sdk"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.3.4",
@@ -47,6 +49,10 @@
     "eslint-config-next": "15.2.2",
     "eslint-plugin-import": "^2.29.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "terser-webpack-plugin": "^5.3.14",
+    "ts-loader": "^9.5.2",
+    "typescript": "^5",
+    "webpack": "^5.98.0",
+    "webpack-cli": "^5.1.4"
   }
 }
