@@ -26,7 +26,7 @@ function AuthEmbedContent() {
 
     try {
       // Include API token in authentication request if provided
-      const response = await fetch("/api/auth", {
+      const response = await fetch("/api/auth/authenticate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
